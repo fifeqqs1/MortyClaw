@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from ..todos import hydrate_todos_from_state_or_session
+
+
+def make_execution_guard_node(
+    *,
+    with_working_memory_fn,
+    validate_pending_execution_snapshot_fn,
+    load_session_todo_state_fn,
+    audit_logger_instance,
+):
+    def execution_guard_node(state, config) -> dict:
+        thread_id = config.get("configurable", {}).get("thread_id", "system_default")
+        hydrated_updates = hydrate_todos_from_state_or_session(
+            state,
+            session_todo_state=load_session_todo_state_fn(thread_id),
+            summary_text=state.get("summary", ""),
+            risk_fallback=lambda _description: str(state.get("risk_level", "medium") or "medium"),
+        )
+        working_state = state | hydrated_updates
+
+        if not (working_state.get("approval_granted") and working_state.get("pending_tool_calls")):
+            return with_working_memory_fn(state, {
+                **hydrated_updates,
+                "execution_guard_status": "skipped",
+                "execution_guard_reason": "",
+            })
+
+        validation = validate_pending_execution_snapshot_fn(working_state)
+        status = str(validation.get("status", "passed") or "passed")
+        reason = str(validation.get("reason", "") or "")
+
+        audit_logger_instance.log_event(
+            thread_id=thread_id,
+            event="system_action",
+            content=f"execution guard {status} | reason={reason or 'none'}",
+        )
+
+        if validation.get("ok", False):
+            return with_working_memory_fn(state, {
+                **hydrated_updates,
+                "execution_guard_status": status,
+                "execution_guard_reason": reason,
+            })
+
+        return with_working_memory_fn(state, {
+            **hydrated_updates,
+            "route": "slow",
+            "planner_required": True,
+            "route_source": "resume_validation",
+            "route_reason": "execution context drift detected",
+            "replan_reason": reason or "恢复执行前检测到环境变化，需要重新规划。",
+            "approval_granted": False,
+            "approval_prompted": False,
+            "pending_approval": False,
+            "approval_reason": "",
+            "permission_mode": "",
+            "permission_prompted": False,
+            "pending_tool_calls": [],
+            "pending_execution_snapshot": {},
+            "execution_guard_status": status,
+            "execution_guard_reason": reason,
+            "last_error": (reason or "")[:200],
+            "final_answer": "",
+            "run_status": "replan_requested",
+        })
+
+    return execution_guard_node

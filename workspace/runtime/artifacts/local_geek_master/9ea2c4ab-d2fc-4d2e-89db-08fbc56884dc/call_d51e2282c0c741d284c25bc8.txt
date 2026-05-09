@@ -1,0 +1,101 @@
+全文搜索结果：
+learn-claude-code/requirements.txt:1: anthropic>=0.25.0
+learn-claude-code/requirements.txt:2: python-dotenv>=1.0.0
+learn-claude-code/requirements.txt:3: pyyaml>=6.0
+learn-claude-code/README-ja.md:1: [English](./README.md) | [中文](./README-zh.md) | [日本語](./README-ja.md)
+learn-claude-code/README-ja.md:68: 1. 0 から自分で、構造が明快で反復改善できる coding-agent harness を組み立てられること
+learn-claude-code/README-ja.md:69: 2. より複雑な実装を読むときに、何が設計主線で何が製品周辺の detail なのかを見分けられること
+learn-claude-code/README-ja.md:82: - 全体マップ: [`docs/ja/s00-architecture-overview.md`](./docs/ja/s00-architecture-overview.md)
+learn-claude-code/README-ja.md:83: - コード読解順: [`docs/ja/s00f-code-reading-order.md`](./docs/ja/s00f-code-reading-order.md)
+learn-claude-code/README-ja.md:84: - 用語集: [`docs/ja/glossary.md`](./docs/ja/glossary.md)
+learn-claude-code/README-ja.md:85: - 教材範囲: [`docs/ja/teaching-scope.md`](./docs/ja/teaching-scope.md)
+learn-claude-code/README-ja.md:86: - データ構造表: [`docs/ja/data-structures.md`](./docs/ja/data-structures.md)
+learn-claude-code/README-ja.md:94: 1. [`docs/ja/s00-architecture-overview.md`](./docs/ja/s00-architecture-overview.md) で全体図をつかむ
+learn-claude-code/README-ja.md:95: 2. [`docs/ja/s00d-chapter-order-rationale.md`](./docs/ja/s00d-chapter-order-rationale.md) で、なぜこの順序で学ぶのかを確認する
+learn-claude-code/README-ja.md:96: 3. [`docs/ja/s00f-code-reading-order.md`](./docs/ja/s00f-code-reading-order.md) で、ローカルの `agents/*.py` をどの順で開くか確認する
+learn-claude-code/README-ja.md:97: 4. `s01-s06 -> s07-s11 -> s12-s14 -> s15-s19` の 4 段階で主線を順に進める
+learn-claude-code/README-ja.md:98: 5. 各段階の終わりで一度止まり、最小版を自分で書き直してから次へ進む
+learn-claude-code/README-ja.md:102: 1. [`docs/ja/data-structures.md`](./docs/ja/data-structures.md)
+learn-claude-code/README-ja.md:103: 2. [`docs/ja/entity-map.md`](./docs/ja/entity-map.md)
+learn-claude-code/README-ja.md:104: 3. いま詰まっている章に近い bridge doc
+learn-claude-code/README-ja.md:105: 4. その後で章本文へ戻る
+learn-claude-code/README-ja.md:131: - なぜこの章順なのか: [`docs/ja/s00d-chapter-order-rationale.md`](./docs/ja/s00d-chapter-order-rationale.md)
+learn-claude-code/README-ja.md:132: - このリポジトリのコード読解順: [`docs/ja/s00f-code-reading-order.md`](./docs/ja/s00f-code-reading-order.md)
+learn-claude-code/README-ja.md:133: - 参照リポジトリのモジュール対応: [`docs/ja/s00e-reference-module-map.md`](./docs/ja/s00e-reference-module-map.md)
+learn-claude-code/README-ja.md:134: - クエリ制御プレーン: [`docs/ja/s00a-query-control-plane.md`](./docs/ja/s00a-query-control-plane.md)
+learn-claude-code/README-ja.md:135: - 1リクエストの全ライフサイクル: [`docs/ja/s00b-one-request-lifecycle.md`](./docs/ja/s00b-one-request-lifecycle.md)
+learn-claude-code/README-ja.md:136: - クエリ遷移モデル: [`docs/ja/s00c-query-transition-model.md`](./docs/ja/s00c-query-transition-model.md)
+learn-claude-code/README-ja.md:137: - ツール制御プレーン: [`docs/ja/s02a-tool-control-plane.md`](./docs/ja/s02a-tool-control-plane.md)
+learn-claude-code/README-ja.md:138: - ツール実行ランタイム: [`docs/ja/s02b-tool-execution-runtime.md`](./docs/ja/s02b-tool-execution-runtime.md)
+learn-claude-code/README-ja.md:139: - Message / Prompt パイプライン: [`docs/ja/s10a-message-prompt-pipeline.md`](./docs/ja/s10a-message-prompt-pipeline.md)
+learn-claude-code/README-ja.md:140: - ランタイムタスクモデル: [`docs/ja/s13a-runtime-task-model.md`](./docs/ja/s13a-runtime-task-model.md)
+learn-claude-code/README-ja.md:141: - MCP 能力レイヤー: [`docs/ja/s19a-mcp-capability-layers.md`](./docs/ja/s19a-mcp-capability-layers.md)
+learn-claude-code/README-ja.md:142: - Teammate・Task・Lane モデル: [`docs/ja/team-task-lane-model.md`](./docs/ja/team-task-lane-model.md)
+learn-claude-code/README-ja.md:143: - エンティティ地図: [`docs/ja/entity-map.md`](./docs/ja/entity-map.md)
+learn-claude-code/README-ja.md:147: 1. `s01-s06`: まず単体 agent のコアを作る
+learn-claude-code/README-ja.md:148: 2. `s07-s11`: 安全性、拡張性、記憶、prompt、recovery を足す
+learn-claude-code/README-ja.md:149: 3. `s12-s14`: 一時的な計画を持続的なランタイム作業へ育てる
+learn-claude-code/README-ja.md:150: 4. `s15-s19`: チーム、プロトコル、自律動作、分離実行、外部 capability routing へ進む
+learn-claude-code/README-ja.md:180: git clone https://github.com/shareAI-lab/learn-claude-code
+learn-claude-code/README-ja.md:182: pip install -r requirements.txt
+learn-claude-code/README-ja.md:183: cp .env.example .env
+learn-claude-code/README-ja.md:186: その後、`.env` に `ANTHROPIC_API_KEY` または互換エンドポイントを設定してから:
+learn-claude-code/README-ja.md:189: python agents/s01_agent_loop.py
+learn-claude-code/README-ja.md:190: python agents/s18_worktree_task_isolation.py
+learn-claude-code/README-ja.md:191: python agents/s19_mcp_plugin.py
+learn-claude-code/README-ja.md:192: python agents/s_full.py
+learn-claude-code/README-ja.md:197: 1. まず `s01` を動かし、最小ループが本当に動くことを確認する
+learn-claude-code/README-ja.md:198: 2. `s00` を読みながら `s01 -> s11` を順に進める
+learn-claude-code/README-ja.md:199: 3. 単体 agent 本体と control plane が安定して理解できてから `s12 -> s19` に入る
+learn-claude-code/README-ja.md:200: 4. 最後に `s_full.py` を見て、全部の機構を一枚の全体像に戻す
+learn-claude-code/README-ja.md:206: 1. この機構がないと何が困るか
+learn-claude-code/README-ja.md:207: 2. 新しい概念は何か
+learn-claude-code/README-ja.md:208: 3. 最小で正しい実装は何か
+learn-claude-code/README-ja.md:209: 4. 状態はどこに置かれるのか
+learn-claude-code/README-ja.md:210: 5. それがループにどう接続されるのか
+learn-claude-code/README-ja.md:211: 6. この章ではどこで一度止まり、何を後回しにしてよいのか
+learn-claude-code/README-ja.md:220: - [`docs/ja/teaching-scope.md`](./docs/ja/teaching-scope.md)
+learn-claude-code/README-ja.md:221: - [`docs/ja/data-structures.md`](./docs/ja/data-structures.md)
+learn-claude-code/README-ja.md:222: - [`docs/ja/entity-map.md`](./docs/ja/entity-map.md)
+learn-claude-code/README-ja.md:234: └── requirements.txt
+learn-claude-code/README.md:1: [English](./README.md) | [中文](./README-zh.md) | [日本語](./README-ja.md)
+learn-claude-code/README.md:5: A teaching repository for implementers who want to build a high-completion coding-agent harness from scratch.
+learn-claude-code/README.md:7: This repo does not try to mirror every product detail from a production codebase. It focuses on the mechanisms that actually decide whether an agent can work well:
+learn-claude-code/README.md:25: **understand the real design backbone well enough that you can rebuild it yourself.**
+learn-claude-code/README.md:31: **The model does the reasoning. The harness gives the model a working environment.**
+learn-claude-code/README.md:54: This repo is not trying to preserve every detail that may exist in a real production system.
+learn-claude-code/README.md:56: If a detail is not central to the agent's core operating model, it should not dominate the teaching line. That includes things like:
+learn-claude-code/README.md:65: Those details may matter in production. They do not belong at the center of a 0-to-1 teaching path.
+learn-claude-code/README.md:84: The English docs are intended to stand on their own. The chapter order, bridge docs, and mechanism map are aligned across locales, so you can stay inside one language while following the main learning path.
+learn-claude-code/README.md:86: - Overview: [`docs/en/s00-architecture-overview.md`](./docs/en/s00-architecture-overview.md)
+learn-claude-code/README.md:87: - Code Reading Order: [`docs/en/s00f-code-reading-order.md`](./docs/en/s00f-code-reading-order.md)
+learn-claude-code/README.md:88: - Glossary: [`docs/en/glossary.md`](./docs/en/glossary.md)
+learn-claude-code/README.md:89: - Teaching Scope: [`docs/en/teaching-scope.md`](./docs/en/teaching-scope.md)
+learn-claude-code/README.md:90: - Data Structures: [`docs/en/data-structures.md`](./docs/en/data-structures.md)
+learn-claude-code/README.md:94: Do not open random chapters first.
+learn-claude-code/README.md:98: 1. Read [`docs/en/s00-architecture-overview.md`](./docs/en/s00-architecture-overview.md) for the full system map.
+learn-claude-code/README.md:99: 2. Read [`docs/en/s00d-chapter-order-rationale.md`](./docs/en/s00d-chapter-order-rationale.md) so the chapter order makes sense before you dive into mechanism detail.
+learn-claude-code/README.md:100: 3. Read [`docs/en/s00f-code-reading-order.md`](./docs/en/s00f-code-reading-order.md) so you know which local files to open first.
+learn-claude-code/README.md:101: 4. Follow the four stages in order: `s01-s06 -> s07-s11 -> s12-s14 -> s15-s19`.
+learn-claude-code/README.md:102: 5. After each stage, stop and rebuild the smallest version yourself before continuing.
+learn-claude-code/README.md:106: 1. [`docs/en/data-structures.md`](./docs/en/data-structures.md)
+learn-claude-code/README.md:107: 2. [`docs/en/entity-map.md`](./docs/en/entity-map.md)
+learn-claude-code/README.md:108: 3. the bridge docs closest to the chapter you are stuck on
+learn-claude-code/README.md:109: 4. then return to the chapter body
+learn-claude-code/README.md:128: For a first pass, start with `timeline`.
+learn-claude-code/README.md:129: If you are already in the middle and chapter boundaries are getting fuzzy, use `layers` and `compare` before you go deeper into source code.
+learn-claude-code/README.md:133: These are not extra main chapters. They are bridge documents that make the middle and late system easier to understand:
+learn-claude-code/README.md:135: - Chapter order rationale: [`docs/en/s00d-chapter-order-rationale.md`](./docs/en/s00d-chapter-order-rationale.md)
+learn-claude-code/README.md:136: - Code reading order: [`docs/en/s00f-code-reading-order.md`](./docs/en/s00f-code-reading-order.md)
+learn-claude-code/README.md:137: - Reference module map: [`docs/en/s00e-reference-module-map.md`](./docs/en/s00e-reference-module-map.md)
+learn-claude-code/README.md:138: - Query control plane: [`docs/en/s00a-query-control-plane.md`](./docs/en/s00a-query-control-plane.md)
+learn-claude-code/README.md:139: - One request lifecycle: [`docs/en/s00b-one-request-lifecycle.md`](./docs/en/s00b-one-request-lifecycle.md)
+learn-claude-code/README.md:140: - Query transition model: [`docs/en/s00c-query-transition-model.md`](./docs/en/s00c-query-transition-model.md)
+learn-claude-code/README.md:141: - Tool control plane: [`docs/en/s02a-tool-control-plane.md`](./docs/en/s02a-tool-control-plane.md)
+learn-claude-code/README.md:142: - Tool execution runtime: [`docs/en/s02b-tool-execution-runtime.md`](./docs/en/s02b-tool-execution-runtime.md)
+learn-claude-code/README.md:143: - Message and prompt pipeline: [`docs/en/s10a-message-prompt-pipeline.md`](./docs/en/s10a-message-prompt-pipeline.md)
+learn-claude-code/README.md:144: - Runtime task model: [`docs/en/s13a-runtime-task-model.md`](./docs/en/s13a-runtime-task-model.md)
+learn-claude-code/README.md:145: - MCP capability layers: [`docs/en/s19a-mcp-capability-layers.md`](./docs/en/s19a-mcp-capability-layers.md)
+learn-claude-code/README.md:146: - Team-task-lane model: [`docs/en/team-task-lane-model.md`](./docs/en/team-task-lane-model.md)
+learn-claude-code/README.md:147: - Entity map: [`docs/en/entity-map.md`](./docs/en/entity-map.md)
+learn-claude-code/README.md:151: 1. `s01-s06`: build a useful single-agent core

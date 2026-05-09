@@ -1,0 +1,104 @@
+Metadata-Version: 2.4
+Name: langgraph-checkpoint-sqlite
+Version: 3.0.3
+Summary: Library with a SQLite implementation of LangGraph checkpoint saver.
+Project-URL: Source, https://github.com/langchain-ai/langgraph/tree/main/libs/checkpoint-sqlite
+Project-URL: Twitter, https://x.com/LangChain
+Project-URL: Slack, https://www.langchain.com/join-community
+Project-URL: Reddit, https://www.reddit.com/r/LangChain/
+License-Expression: MIT
+License-File: LICENSE
+Requires-Python: >=3.10
+Requires-Dist: aiosqlite>=0.20
+Requires-Dist: langgraph-checkpoint<5.0.0,>=3
+Requires-Dist: sqlite-vec>=0.1.6
+Description-Content-Type: text/markdown
+
+# LangGraph SQLite Checkpoint
+
+Implementation of LangGraph CheckpointSaver that uses SQLite DB (both sync and async, via `aiosqlite`)
+
+## Usage
+
+```python
+from langgraph.checkpoint.sqlite import SqliteSaver
+
+write_config = {"configurable": {"thread_id": "1", "checkpoint_ns": ""}}
+read_config = {"configurable": {"thread_id": "1"}}
+
+with SqliteSaver.from_conn_string(":memory:") as checkpointer:
+    checkpoint = {
+        "v": 4,
+        "ts": "2024-07-31T20:14:19.804150+00:00",
+        "id": "1ef4f797-8335-6428-8001-8a1503f9b875",
+        "channel_values": {
+            "my_key": "meow",
+            "node": "node"
+        },
+        "channel_versions": {
+            "__start__": 2,
+            "my_key": 3,
+            "start:node": 3,
+            "node": 3
+        },
+        "versions_seen": {
+            "__input__": {},
+            "__start__": {
+                "__start__": 1
+            },
+            "node": {
+                "start:node": 2
+            }
+        },
+    }
+
+    # store checkpoint
+    checkpointer.put(write_config, checkpoint, {}, {})
+
+    # load checkpoint
+    checkpointer.get(read_config)
+
+    # list checkpoints
+    list(checkpointer.list(read_config))
+```
+
+### Async
+
+```python
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+async with AsyncSqliteSaver.from_conn_string(":memory:") as checkpointer:
+    checkpoint = {
+        "v": 4,
+        "ts": "2024-07-31T20:14:19.804150+00:00",
+        "id": "1ef4f797-8335-6428-8001-8a1503f9b875",
+        "channel_values": {
+            "my_key": "meow",
+            "node": "node"
+        },
+        "channel_versions": {
+            "__start__": 2,
+            "my_key": 3,
+            "start:node": 3,
+            "node": 3
+        },
+        "versions_seen": {
+            "__input__": {},
+            "__start__": {
+                "__start__": 1
+            },
+            "node": {
+                "start:node": 2
+            }
+        },
+    }
+
+    # store checkpoint
+    await checkpointer.aput(write_config, checkpoint, {}, {})
+
+    # load checkpoint
+    await checkpointer.aget(read_config)
+
+    # list checkpoints
+    [c async for c in checkpointer.alist(read_config)]
+```

@@ -1,0 +1,90 @@
+"use strict";
+/* eslint-disable camelcase */
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.o200k_harmony = exports.o200k_base = exports.cl100k_base = exports.p50k_edit = exports.r50k_base = exports.p50k_base = void 0;
+// reference: https://github.com/openai/tiktoken/blob/4560a8896f5fb1d35c6f8fd6eee0399f9a1a27ca/tiktoken/model.py
+// --- p50k_base models ---
+exports.p50k_base = [
+    // legacy models
+    'text-davinci-002',
+    'text-davinci-003',
+    'code-davinci-001',
+    'code-davinci-002',
+    'davinci-codex',
+    'code-cushman-001',
+    'code-cushman-002',
+    'cushman-codex',
+];
+// --- r50k_base models ---
+exports.r50k_base = [
+    // legacy models
+    'text-ada-001',
+    'text-babbage-001',
+    'text-curie-001',
+    'text-davinci-001',
+    'ada',
+    'babbage',
+    'curie',
+    'davinci',
+    'code-search-ada-code-001',
+    'code-search-ada-text-001',
+    'text-similarity-ada-001',
+    'text-search-ada-doc-001',
+    'text-search-ada-query-001',
+    'text-similarity-babbage-001',
+    'text-search-babbage-doc-001',
+    'text-search-babbage-query-001',
+    'code-search-babbage-code-001',
+    'code-search-babbage-text-001',
+    'text-similarity-curie-001',
+    'text-search-curie-doc-001',
+    'text-search-curie-query-001',
+    'text-similarity-davinci-001',
+    'text-search-davinci-doc-001',
+    'text-search-davinci-query-001',
+];
+// --- p50k_edit models ---
+exports.p50k_edit = [
+    'code-davinci-edit-001',
+    'text-davinci-edit-001',
+];
+// --- cl100k_base models ---
+exports.cl100k_base = [
+    // all gpt-3.5 models:
+    'gpt-3.5',
+    'gpt-3.5-0301',
+    'gpt-3.5-turbo',
+    'gpt-3.5-turbo-0125',
+    'gpt-3.5-turbo-0613',
+    'gpt-3.5-turbo-1106',
+    'gpt-3.5-turbo-16k-0613',
+    'gpt-3.5-turbo-instruct',
+    // all gpt-4.0 models:
+    'gpt-4',
+    'gpt-4-0125-preview',
+    'gpt-4-0314',
+    'gpt-4-0613',
+    'gpt-4-1106-preview',
+    'gpt-4-1106-vision-preview',
+    'gpt-4-32k',
+    'gpt-4-turbo',
+    'gpt-4-turbo-2024-04-09',
+    'gpt-4-turbo-preview',
+    // embedding models:
+    'text-embedding-3-large',
+    'text-embedding-3-small',
+    'text-embedding-ada-002',
+    // still supported models:
+    'babbage-002',
+    'davinci-002',
+];
+// all new proprietary models use o200k_base, hence we don't need to list them here
+// (e.g. chatgpt-4o-latest, gpt-5, o1, etc.)
+// --- o200k_base models ---
+exports.o200k_base = [];
+// --- o200k_harmony models ---
+exports.o200k_harmony = [
+    'gpt-oss-20b',
+    'gpt-oss-120b',
+];
+//# sourceMappingURL=modelsMap.js.map

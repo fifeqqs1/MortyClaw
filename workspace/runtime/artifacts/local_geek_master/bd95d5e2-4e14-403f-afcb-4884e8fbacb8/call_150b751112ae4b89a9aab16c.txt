@@ -1,0 +1,242 @@
+文件：README.md
+行号范围：1-240 / total=261
+    1: [English](./README.md) | [中文](./README-zh.md) | [日本語](./README-ja.md)
+    2: 
+    3: # Learn Claude Code
+    4: 
+    5: A teaching repository for implementers who want to build a high-completion coding-agent harness from scratch.
+    6: 
+    7: This repo does not try to mirror every product detail from a production codebase. It focuses on the mechanisms that actually decide whether an agent can work well:
+    8: 
+    9: - the loop
+   10: - tools
+   11: - planning
+   12: - delegation
+   13: - context control
+   14: - permissions
+   15: - hooks
+   16: - memory
+   17: - prompt assembly
+   18: - tasks
+   19: - teams
+   20: - isolated execution lanes
+   21: - external capability routing
+   22: 
+   23: The goal is simple:
+   24: 
+   25: **understand the real design backbone well enough that you can rebuild it yourself.**
+   26: 
+   27: ## What This Repo Is Really Teaching
+   28: 
+   29: One sentence first:
+   30: 
+   31: **The model does the reasoning. The harness gives the model a working environment.**
+   32: 
+   33: That working environment is made of a few cooperating parts:
+   34: 
+   35: - `Agent Loop`: ask the model, run tools, append results, continue
+   36: - `Tools`: the agent's hands
+   37: - `Planning`: a small structure that keeps multi-step work from drifting
+   38: - `Context Management`: keep the active context small and coherent
+   39: - `Permissions`: do not let model intent turn into unsafe execution directly
+   40: - `Hooks`: extend behavior around the loop without rewriting the loop
+   41: - `Memory`: keep only durable facts that should survive sessions
+   42: - `Prompt Construction`: assemble the model input from stable rules and runtime state
+   43: - `Tasks / Teams / Worktree / MCP`: grow the single-agent core into a larger working platform
+   44: 
+   45: This is the teaching promise of the repo:
+   46: 
+   47: - teach the mainline in a clean order
+   48: - explain unfamiliar concepts before relying on them
+   49: - stay close to real system structure
+   50: - avoid drowning the learner in irrelevant product details
+   51: 
+   52: ## What This Repo Deliberately Does Not Teach
+   53: 
+   54: This repo is not trying to preserve every detail that may exist in a real production system.
+   55: 
+   56: If a detail is not central to the agent's core operating model, it should not dominate the teaching line. That includes things like:
+   57: 
+   58: - packaging and release mechanics
+   59: - cross-platform compatibility layers
+   60: - enterprise policy glue
+   61: - telemetry and account wiring
+   62: - historical compatibility branches
+   63: - product-specific naming accidents
+   64: 
+   65: Those details may matter in production. They do not belong at the center of a 0-to-1 teaching path.
+   66: 
+   67: ## Who This Is For
+   68: 
+   69: The assumed reader:
+   70: 
+   71: - knows basic Python
+   72: - understands functions, classes, lists, and dictionaries
+   73: - may be completely new to agent systems
+   74: 
+   75: So the repo tries to keep a few strong teaching rules:
+   76: 
+   77: - explain a concept before using it
+   78: - keep one concept fully explained in one main place
+   79: - start from "what it is", then "why it exists", then "how to implement it"
+   80: - avoid forcing beginners to assemble the system from scattered fragments
+   81: 
+   82: ## Recommended Reading Order
+   83: 
+   84: The English docs are intended to stand on their own. The chapter order, bridge docs, and mechanism map are aligned across locales, so you can stay inside one language while following the main learning path.
+   85: 
+   86: - Overview: [`docs/en/s00-architecture-overview.md`](./docs/en/s00-architecture-overview.md)
+   87: - Code Reading Order: [`docs/en/s00f-code-reading-order.md`](./docs/en/s00f-code-reading-order.md)
+   88: - Glossary: [`docs/en/glossary.md`](./docs/en/glossary.md)
+   89: - Teaching Scope: [`docs/en/teaching-scope.md`](./docs/en/teaching-scope.md)
+   90: - Data Structures: [`docs/en/data-structures.md`](./docs/en/data-structures.md)
+   91: 
+   92: ## If This Is Your First Visit, Start Here
+   93: 
+   94: Do not open random chapters first.
+   95: 
+   96: The safest path is:
+   97: 
+   98: 1. Read [`docs/en/s00-architecture-overview.md`](./docs/en/s00-architecture-overview.md) for the full system map.
+   99: 2. Read [`docs/en/s00d-chapter-order-rationale.md`](./docs/en/s00d-chapter-order-rationale.md) so the chapter order makes sense before you dive into mechanism detail.
+  100: 3. Read [`docs/en/s00f-code-reading-order.md`](./docs/en/s00f-code-reading-order.md) so you know which local files to open first.
+  101: 4. Follow the four stages in order: `s01-s06 -> s07-s11 -> s12-s14 -> s15-s19`.
+  102: 5. After each stage, stop and rebuild the smallest version yourself before continuing.
+  103: 
+  104: If the middle and late chapters start to blur together, reset in this order:
+  105: 
+  106: 1. [`docs/en/data-structures.md`](./docs/en/data-structures.md)
+  107: 2. [`docs/en/entity-map.md`](./docs/en/entity-map.md)
+  108: 3. the bridge docs closest to the chapter you are stuck on
+  109: 4. then return to the chapter body
+  110: 
+  111: ## Web Learning Interface
+  112: 
+  113: If you want a more visual way to understand the chapter order, stage boundaries, and chapter-to-chapter upgrades, run the built-in teaching site:
+  114: 
+  115: ```sh
+  116: cd web
+  117: npm install
+  118: npm run dev
+  119: ```
+  120: 
+  121: Then use these routes:
+  122: 
+  123: - `/en`: the English entry page for choosing a reading path
+  124: - `/en/timeline`: the cleanest view of the full mainline
+  125: - `/en/layers`: the four-stage boundary map
+  126: - `/en/compare`: adjacent-step comparison and jump diagnosis
+  127: 
+  128: For a first pass, start with `timeline`.  
+  129: If you are already in the middle and chapter boundaries are getting fuzzy, use `layers` and `compare` before you go deeper into source code.
+  130: 
+  131: ### Bridge Docs
+  132: 
+  133: These are not extra main chapters. They are bridge documents that make the middle and late system easier to understand:
+  134: 
+  135: - Chapter order rationale: [`docs/en/s00d-chapter-order-rationale.md`](./docs/en/s00d-chapter-order-rationale.md)
+  136: - Code reading order: [`docs/en/s00f-code-reading-order.md`](./docs/en/s00f-code-reading-order.md)
+  137: - Reference module map: [`docs/en/s00e-reference-module-map.md`](./docs/en/s00e-reference-module-map.md)
+  138: - Query control plane: [`docs/en/s00a-query-control-plane.md`](./docs/en/s00a-query-control-plane.md)
+  139: - One request lifecycle: [`docs/en/s00b-one-request-lifecycle.md`](./docs/en/s00b-one-request-lifecycle.md)
+  140: - Query transition model: [`docs/en/s00c-query-transition-model.md`](./docs/en/s00c-query-transition-model.md)
+  141: - Tool control plane: [`docs/en/s02a-tool-control-plane.md`](./docs/en/s02a-tool-control-plane.md)
+  142: - Tool execution runtime: [`docs/en/s02b-tool-execution-runtime.md`](./docs/en/s02b-tool-execution-runtime.md)
+  143: - Message and prompt pipeline: [`docs/en/s10a-message-prompt-pipeline.md`](./docs/en/s10a-message-prompt-pipeline.md)
+  144: - Runtime task model: [`docs/en/s13a-runtime-task-model.md`](./docs/en/s13a-runtime-task-model.md)
+  145: - MCP capability layers: [`docs/en/s19a-mcp-capability-layers.md`](./docs/en/s19a-mcp-capability-layers.md)
+  146: - Team-task-lane model: [`docs/en/team-task-lane-model.md`](./docs/en/team-task-lane-model.md)
+  147: - Entity map: [`docs/en/entity-map.md`](./docs/en/entity-map.md)
+  148: 
+  149: ### Four Stages
+  150: 
+  151: 1. `s01-s06`: build a useful single-agent core
+  152: 2. `s07-s11`: add safety, extension points, memory, prompt assembly, and recovery
+  153: 3. `s12-s14`: turn temporary session planning into durable runtime work
+  154: 4. `s15-s19`: move into teams, protocols, autonomy, isolated execution, and external capability routing
+  155: 
+  156: ### Main Chapters
+  157: 
+  158: | Chapter | Topic | What you get |
+  159: |---|---|---|
+  160: | `s00` | Architecture Overview | the global map, key terms, and learning order |
+  161: | `s01` | Agent Loop | the smallest working agent loop |
+  162: | `s02` | Tool Use | a stable tool dispatch layer |
+  163: | `s03` | Todo / Planning | a visible session plan |
+  164: | `s04` | Subagent | fresh context per delegated subtask |
+  165: | `s05` | Skills | load specialized knowledge only when needed |
+  166: | `s06` | Context Compact | keep the active window small |
+  167: | `s07` | Permission System | a safety gate before execution |
+  168: | `s08` | Hook System | extension points around the loop |
+  169: | `s09` | Memory System | durable cross-session knowledge |
+  170: | `s10` | System Prompt | section-based prompt assembly |
+  171: | `s11` | Error Recovery | continuation and retry branches |
+  172: | `s12` | Task System | persistent task graph |
+  173: | `s13` | Background Tasks | non-blocking execution |
+  174: | `s14` | Cron Scheduler | time-based triggers |
+  175: | `s15` | Agent Teams | persistent teammates |
+  176: | `s16` | Team Protocols | shared coordination rules |
+  177: | `s17` | Autonomous Agents | self-claiming and self-resume |
+  178: | `s18` | Worktree Isolation | isolated execution lanes |
+  179: | `s19` | MCP & Plugin | external capability routing |
+  180: 
+  181: ## Quick Start
+  182: 
+  183: ```sh
+  184: git clone https://github.com/shareAI-lab/learn-claude-code
+  185: cd learn-claude-code
+  186: pip install -r requirements.txt
+  187: cp .env.example .env
+  188: ```
+  189: 
+  190: Then configure `ANTHROPIC_API_KEY` or a compatible endpoint in `.env`, and run:
+  191: 
+  192: ```sh
+  193: python agents/s01_agent_loop.py
+  194: python agents/s18_worktree_task_isolation.py
+  195: python agents/s19_mcp_plugin.py
+  196: python agents/s_full.py
+  197: ```
+  198: 
+  199: Suggested order:
+  200: 
+  201: 1. Run `s01` and make sure the minimal loop really works.
+  202: 2. Read `s00`, then move through `s01 -> s11` in order.
+  203: 3. Only after the single-agent core plus its control plane feel stable, continue into `s12 -> s19`.
+  204: 4. Read `s_full.py` last, after the mechanisms already make sense separately.
+  205: 
+  206: ## How To Read Each Chapter
+  207: 
+  208: Each chapter is easier to absorb if you keep the same reading rhythm:
+  209: 
+  210: 1. what problem appears without this mechanism
+  211: 2. what the new concept means
+  212: 3. what the smallest correct implementation looks like
+  213: 4. where the state actually lives
+  214: 5. how it plugs back into the loop
+  215: 6. where to stop first, and what can wait until later
+  216: 
+  217: If you keep asking:
+  218: 
+  219: - "Is this core mainline or just a side detail?"
+  220: - "Where does this state actually live?"
+  221: 
+  222: go back to:
+  223: 
+  224: - [`docs/en/teaching-scope.md`](./docs/en/teaching-scope.md)
+  225: - [`docs/en/data-structures.md`](./docs/en/data-structures.md)
+  226: - [`docs/en/entity-map.md`](./docs/en/entity-map.md)
+  227: 
+  228: ## Repository Structure
+  229: 
+  230: ```text
+  231: learn-claude-code/
+  232: ├── agents/              # runnable Python reference implementations per chapter
+  233: ├── docs/zh/             # Chinese mainline docs
+  234: ├── docs/en/             # English docs
+  235: ├── docs/ja/             # Japanese docs
+  236: ├── skills/              # skill files used in s05
+  237: ├── web/                 # web teaching platform
+  238: └── requirements.txt
+  239: ```
+  240: 

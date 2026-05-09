@@ -1,0 +1,101 @@
+全文搜索结果：
+learn-claude-code/docs/zh/s07-permission-system.md:176: def check_permission(tool_name: str, tool_input: dict) -> dict:
+learn-claude-code/docs/zh/s01-the-agent-loop.md:236: def agent_loop(state):
+learn-claude-code/docs/zh/s08-hook-system.md:140: def run(self, event_name: str, payload: dict) -> dict:
+learn-claude-code/docs/zh/s08-hook-system.md:194: def run_hooks(event_name: str, payload: dict) -> dict:
+learn-claude-code/docs/zh/s09-memory-system.md:198: def save_memory(name, description, mem_type, content):
+learn-claude-code/docs/zh/s04-subagent.md:99: def run_subagent(prompt: str) -> str:
+learn-claude-code/docs/zh/s14-cron-scheduler.md:145: def create(self, cron_expr: str, prompt: str, recurring: bool = True):
+learn-claude-code/docs/zh/s14-cron-scheduler.md:161: def check_loop(self):
+learn-claude-code/docs/zh/s14-cron-scheduler.md:173: def check_jobs(self, now):
+learn-claude-code/docs/zh/s03-todo-write.md:165: def __init__(self):
+learn-claude-code/docs/zh/s03-todo-write.md:172: def update(self, items: list) -> str:
+learn-claude-code/docs/zh/s03-todo-write.md:198: def render(self) -> str:
+learn-claude-code/docs/zh/s00a-query-control-plane.md:212: def query(params):
+learn-claude-code/docs/zh/s06-context-compact.md:158: def persist_large_output(tool_use_id: str, output: str) -> str:
+learn-claude-code/docs/zh/s06-context-compact.md:179: def micro_compact(messages: list) -> list:
+learn-claude-code/docs/zh/s06-context-compact.md:191: def compact_history(messages: list) -> list:
+learn-claude-code/docs/zh/s06-context-compact.md:213: def agent_loop(state):
+learn-claude-code/docs/zh/s15-agent-teams.md:151: def __init__(self, team_dir: Path):
+learn-claude-code/docs/zh/s15-agent-teams.md:163: def spawn(self, name: str, role: str, prompt: str):
+learn-claude-code/docs/zh/s15-agent-teams.md:192: def send(self, sender: str, to: str, content: str):
+learn-claude-code/docs/zh/s15-agent-teams.md:211: def teammate_loop(name: str, role: str, prompt: str):
+learn-claude-code/docs/zh/s10-system-prompt.md:123: def build(self) -> str:
+learn-claude-code/docs/zh/s17-autonomous-agents.md:93: def is_claimable_task(task: dict, role: str | None = None) -> bool:
+learn-claude-code/docs/zh/s17-autonomous-agents.md:252: def idle_phase(name: str, messages: list) -> bool:
+learn-claude-code/docs/zh/s02-tool-use.md:37: def safe_path(p: str) -> Path:
+learn-claude-code/docs/zh/s02-tool-use.md:43: def run_read(path: str, limit: int = None) -> str:
+learn-claude-code/docs/zh/s02-tool-use.md:142: def normalize_messages(messages: list) -> list:
+learn-claude-code/docs/zh/s02b-tool-execution-runtime.md:193: def is_concurrency_safe(tool_name: str, tool_input: dict) -> bool:
+learn-claude-code/docs/zh/s11-error-recovery.md:166: def choose_recovery(stop_reason: str | None, error_text: str | None) -> dict:
+learn-claude-code/docs/zh/s11-error-recovery.md:253: def auto_compact(messages: list) -> list:
+learn-claude-code/docs/zh/s11-error-recovery.md:278: def backoff_delay(attempt: int) -> float:
+learn-claude-code/docs/zh/s05-skill-loading.md:169: def __init__(self, skills_dir):
+learn-claude-code/docs/zh/s05-skill-loading.md:173: def _load_all(self):
+learn-claude-code/docs/zh/s12-task-system.md:139: def is_ready(task: dict) -> bool:
+learn-claude-code/docs/zh/s12-task-system.md:165: def create(self, subject: str, description: str = "") -> dict:
+learn-claude-code/docs/zh/s12-task-system.md:187: def add_dependency(self, task_id: int, blocks_id: int):
+learn-claude-code/docs/zh/s12-task-system.md:208: def complete(self, task_id: int):
+learn-claude-code/docs/zh/s18-worktree-task-isolation.md:223: def create(self, name: str, task_id: int):
+learn-claude-code/docs/zh/s18-worktree-task-isolation.md:243: def bind_worktree(task_id: int, name: str):
+learn-claude-code/docs/zh/s18-worktree-task-isolation.md:269: def enter(self, name: str):
+learn-claude-code/docs/zh/s18-worktree-task-isolation.md:273: def run(self, name: str, command: str):
+learn-claude-code/docs/zh/s13-background-tasks.md:153: def __init__(self):
+learn-claude-code/docs/zh/s13-background-tasks.md:172: def run(self, command: str) -> str:
+learn-claude-code/docs/zh/s13-background-tasks.md:196: def _execute(self, task_id: str, command: str):
+learn-claude-code/docs/zh/s13-background-tasks.md:222: def before_model_call(messages: list):
+learn-claude-code/docs/zh/s10a-message-prompt-pipeline.md:183: def build_messages(raw_messages, attachments, reminders):
+learn-claude-code/docs/zh/s16-team-protocols.md:186: def request_shutdown(target: str):
+learn-claude-code/docs/zh/s16-team-protocols.md:205: def handle_shutdown_response(request_id: str, approve: bool):
+learn-claude-code/docs/zh/s16-team-protocols.md:217: def submit_plan(name: str, plan_text: str):
+learn-claude-code/docs/zh/s16-team-protocols.md:237: def review_plan(request_id: str, approve: bool, feedback: str = ""):
+learn-claude-code/docs/zh/s02a-tool-control-plane.md:198: def __init__(self):
+learn-claude-code/docs/zh/s02a-tool-control-plane.md:210: def run_tool(tool_name: str, tool_input: dict, ctx: ToolUseContext):
+learn-claude-code/docs/zh/s02a-tool-control-plane.md:218: def route_tool(tool_name: str, tool_input: dict, ctx: ToolUseContext):
+learn-claude-code/docs/zh/s13a-runtime-task-model.md:182: def __init__(self):
+learn-claude-code/docs/zh/s13a-runtime-task-model.md:189: def spawn_bash_task(command: str):
+learn-claude-code/docs/ja/s07-permission-system.md:242: def check_permission(tool_name: str, tool_input: dict) -> dict:
+learn-claude-code/docs/ja/s01-the-agent-loop.md:261: def agent_loop(state):
+learn-claude-code/docs/ja/s08-hook-system.md:113: def run_hooks(event_name: str, ctx: dict):
+learn-claude-code/docs/ja/s09-memory-system.md:129: def save_memory(name, description, mem_type, content):
+learn-claude-code/docs/ja/s04-subagent.md:123: def run_subagent(prompt: str) -> str:
+learn-claude-code/docs/ja/s14-cron-scheduler.md:104: def create(self, cron_expr: str, prompt: str, recurring: bool = True):
+learn-claude-code/docs/ja/s14-cron-scheduler.md:118: def check_loop(self):
+learn-claude-code/docs/ja/s14-cron-scheduler.md:126: def check_jobs(self, now):
+learn-claude-code/docs/ja/s03-todo-write.md:207: def __init__(self):
+learn-claude-code/docs/ja/s03-todo-write.md:228: def update(self, items: list) -> str:
+learn-claude-code/docs/ja/s03-todo-write.md:258: def render(self) -> str:
+learn-claude-code/docs/ja/s00a-query-control-plane.md:190: def query(params):
+learn-claude-code/docs/ja/s06-context-compact.md:57: def maybe_persist_output(tool_use_id, output, trigger_chars=None):
+learn-claude-code/docs/ja/s06-context-compact.md:76: def micro_compact(messages: list) -> list:
+learn-claude-code/docs/ja/s06-context-compact.md:90: def auto_compact(messages: list) -> list:
+learn-claude-code/docs/ja/s06-context-compact.md:112: def agent_loop(messages: list):
+learn-claude-code/docs/ja/s15-agent-teams.md:222: def __init__(self, team_dir: Path):
+learn-claude-code/docs/ja/s15-agent-teams.md:234: def spawn(self, name: str, role: str, prompt: str):
+learn-claude-code/docs/ja/s15-agent-teams.md:264: def send(self, sender: str, to: str, content: str):
+learn-claude-code/docs/ja/s15-agent-teams.md:292: def teammate_loop(name: str, role: str, prompt: str):
+learn-claude-code/docs/ja/s10-system-prompt.md:76: def build(self) -> str:
+learn-claude-code/docs/ja/s17-autonomous-agents.md:115: def is_claimable_task(task: dict, role: str | None = None) -> bool:
+learn-claude-code/docs/ja/s17-autonomous-agents.md:289: def idle_phase(name: str, messages: list) -> bool:
+learn-claude-code/docs/ja/s02-tool-use.md:37: def safe_path(p: str) -> Path:
+learn-claude-code/docs/ja/s02-tool-use.md:43: def run_read(path: str, limit: int = None) -> str:
+learn-claude-code/docs/ja/s02b-tool-execution-runtime.md:202: def is_concurrency_safe(tool_name: str, tool_input: dict) -> bool:
+learn-claude-code/docs/ja/s11-error-recovery.md:194: def choose_recovery(stop_reason: str | None, error_text: str | None) -> dict:
+learn-claude-code/docs/ja/s11-error-recovery.md:297: def auto_compact(messages: list) -> list:
+learn-claude-code/docs/ja/s05-skill-loading.md:52: def __init__(self, skills_dir: Path):
+learn-claude-code/docs/ja/s05-skill-loading.md:60: def get_descriptions(self) -> str:
+learn-claude-code/docs/ja/s05-skill-loading.md:67: def get_content(self, name: str) -> str:
+learn-claude-code/docs/ja/s12-task-system.md:61: def __init__(self, tasks_dir: Path):
+learn-claude-code/docs/ja/s12-task-system.md:66: def create(self, subject, description=""):
+learn-claude-code/docs/ja/s12-task-system.md:78: def _clear_dependency(self, completed_id):
+learn-claude-code/docs/ja/s12-task-system.md:89: def update(self, task_id, status=None,
+learn-claude-code/docs/ja/s18-worktree-task-isolation.md:262: def create(self, name: str, task_id: int):
+learn-claude-code/docs/ja/s18-worktree-task-isolation.md:292: def bind_worktree(task_id: int, name: str):
+learn-claude-code/docs/ja/s18-worktree-task-isolation.md:324: def enter(self, name: str):
+learn-claude-code/docs/ja/s18-worktree-task-isolation.md:328: def run(self, name: str, command: str):
+learn-claude-code/docs/ja/s13-background-tasks.md:181: def __init__(self):
+learn-claude-code/docs/ja/s13-background-tasks.md:194: def run(self, command: str) -> str:
+learn-claude-code/docs/ja/s13-background-tasks.md:221: def _execute(self, task_id: str, command: str):
+learn-claude-code/docs/ja/s13-background-tasks.md:249: def agent_loop(messages: list):
+learn-claude-code/docs/ja/s13-background-tasks.md:293: def detect_stalled(self) -> list[str]:
+learn-claude-code/docs/ja/s16-team-protocols.md:228: def request_shutdown(target: str):

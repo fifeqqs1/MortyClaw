@@ -1,0 +1,16 @@
+export declare const EndOfText = "<|endoftext|>";
+export declare const FimPrefix = "<|fim_prefix|>";
+export declare const FimMiddle = "<|fim_middle|>";
+export declare const FimSuffix = "<|fim_suffix|>";
+export declare const ImStart = "<|im_start|>";
+export declare const ImEnd = "<|im_end|>";
+export declare const ImSep = "<|im_sep|>";
+export declare const EndOfPrompt = "<|endofprompt|>";
+export declare const HarmonyStartOfText = "<|startoftext|>";
+export declare const HarmonyStart = "<|start|>";
+export declare const HarmonyEnd = "<|end|>";
+export declare const HarmonyMessage = "<|message|>";
+export declare const HarmonyChannel = "<|channel|>";
+export declare const HarmonyReturn = "<|return|>";
+export declare const HarmonyConstrain = "<|constrain|>";
+export declare const HarmonyCall = "<|call|>";
