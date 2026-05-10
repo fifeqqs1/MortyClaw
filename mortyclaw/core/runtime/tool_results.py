@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
+import uuid
 from typing import Any
 
 from langchain_core.messages import ToolMessage
@@ -14,6 +17,8 @@ PERSISTED_OUTPUT_CLOSING_TAG = "</persisted-output>"
 DEFAULT_PREVIEW_CHARS = 2400
 DEFAULT_RESULT_THRESHOLD = 9000
 MAX_TURN_BUDGET_CHARS = 24000
+CONTEXT_ARTIFACT_DIR_NAME = "context"
+CONTEXT_ARTIFACT_MANIFEST = "manifest.jsonl"
 
 TOOL_RESULT_THRESHOLDS = {
     "run_project_command": 7000,
@@ -47,6 +52,34 @@ def _artifact_path(thread_id: str, turn_id: str, tool_call_id: str) -> str:
         _artifact_dir(thread_id, turn_id),
         f"{_safe_component(tool_call_id, default='tool_call')}.txt",
     )
+
+
+def _context_artifact_dir(thread_id: str, turn_id: str) -> str:
+    return os.path.join(
+        RUNTIME_ARTIFACTS_DIR,
+        CONTEXT_ARTIFACT_DIR_NAME,
+        _safe_component(thread_id, default="thread"),
+        _safe_component(turn_id, default="turn"),
+    )
+
+
+def _context_artifact_path(thread_id: str, turn_id: str, ref_id: str) -> str:
+    return os.path.join(
+        _context_artifact_dir(thread_id, turn_id),
+        f"{_safe_component(ref_id, default='context_artifact')}.txt",
+    )
+
+
+def _context_manifest_path(thread_id: str, turn_id: str) -> str:
+    return os.path.join(_context_artifact_dir(thread_id, turn_id), CONTEXT_ARTIFACT_MANIFEST)
+
+
+def _sha256_text(content: str) -> str:
+    return hashlib.sha256(str(content or "").encode("utf-8", errors="replace")).hexdigest()
+
+
+def _safe_json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
 def _extract_metadata(message: ToolMessage) -> dict[str, Any]:
@@ -90,6 +123,122 @@ def build_artifact_message(
         lines.append("...")
     lines.append(PERSISTED_OUTPUT_CLOSING_TAG)
     return "\n".join(lines)
+
+
+def persist_context_artifact(
+    *,
+    content: str,
+    thread_id: str,
+    turn_id: str,
+    tool_name: str = "",
+    args_summary: str = "",
+    restore_hint: str = "",
+    ref_id: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Persist original context content before replacing it with a prompt stub."""
+
+    normalized_content = str(content or "")
+    normalized_ref_id = _safe_component(ref_id, default="")
+    if not normalized_ref_id:
+        normalized_ref_id = f"ctx_{uuid.uuid4().hex}"
+    artifact_path = _context_artifact_path(thread_id, turn_id, normalized_ref_id)
+    os.makedirs(os.path.dirname(artifact_path), exist_ok=True)
+    with open(artifact_path, "w", encoding="utf-8", errors="replace") as handle:
+        handle.write(normalized_content)
+
+    content_hash = f"sha256:{_sha256_text(normalized_content)}"
+    record = {
+        "ref_id": normalized_ref_id,
+        "artifact_path": artifact_path,
+        "content_hash": content_hash,
+        "original_chars": len(normalized_content),
+        "tool_name": str(tool_name or ""),
+        "args_summary": str(args_summary or ""),
+        "restore_hint": str(restore_hint or ""),
+        "metadata": dict(metadata or {}),
+    }
+    manifest_path = _context_manifest_path(thread_id, turn_id)
+    with open(manifest_path, "a", encoding="utf-8", errors="replace") as handle:
+        handle.write(_safe_json_dumps(record) + "\n")
+    return record
+
+
+def _iter_context_artifact_records() -> list[dict[str, Any]]:
+    root = os.path.join(RUNTIME_ARTIFACTS_DIR, CONTEXT_ARTIFACT_DIR_NAME)
+    if not os.path.isdir(root):
+        return []
+    records: list[dict[str, Any]] = []
+    for dirpath, _dirnames, filenames in os.walk(root):
+        if CONTEXT_ARTIFACT_MANIFEST not in filenames:
+            continue
+        manifest_path = os.path.join(dirpath, CONTEXT_ARTIFACT_MANIFEST)
+        try:
+            with open(manifest_path, "r", encoding="utf-8", errors="replace") as handle:
+                for line in handle:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        payload = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(payload, dict):
+                        records.append(payload)
+        except OSError:
+            continue
+    return records
+
+
+def _is_path_within_root(path: str, root: str) -> bool:
+    try:
+        resolved_path = os.path.realpath(path)
+        resolved_root = os.path.realpath(root)
+        return os.path.commonpath([resolved_path, resolved_root]) == resolved_root
+    except Exception:
+        return False
+
+
+def restore_context_artifact(ref_id: str, *, preview_chars: int = DEFAULT_PREVIEW_CHARS) -> str:
+    normalized_ref_id = _safe_component(str(ref_id or ""), default="")
+    if not normalized_ref_id:
+        return json.dumps({"ok": False, "message": "ref_id is required"}, ensure_ascii=False)
+
+    matching_record = None
+    for record in _iter_context_artifact_records():
+        if str(record.get("ref_id", "") or "") == normalized_ref_id:
+            matching_record = record
+            break
+    if not matching_record:
+        return json.dumps({"ok": False, "message": f"context artifact not found: {normalized_ref_id}"}, ensure_ascii=False)
+
+    artifact_path = str(matching_record.get("artifact_path", "") or "")
+    if not _is_path_within_root(artifact_path, RUNTIME_ARTIFACTS_DIR):
+        return json.dumps({"ok": False, "message": "artifact path is outside runtime artifact root"}, ensure_ascii=False)
+    if not os.path.exists(artifact_path):
+        return json.dumps({"ok": False, "message": "artifact file is missing", "ref_id": normalized_ref_id}, ensure_ascii=False)
+
+    with open(artifact_path, "r", encoding="utf-8", errors="replace") as handle:
+        content = handle.read()
+    actual_hash = f"sha256:{_sha256_text(content)}"
+    expected_hash = str(matching_record.get("content_hash", "") or "")
+    preview, has_more = _generate_preview(content, limit=max(200, int(preview_chars or DEFAULT_PREVIEW_CHARS)))
+    return json.dumps(
+        {
+            "ok": True,
+            "ref_id": normalized_ref_id,
+            "artifact_path": artifact_path,
+            "content_hash": actual_hash,
+            "hash_matches": not expected_hash or actual_hash == expected_hash,
+            "original_chars": len(content),
+            "tool_name": matching_record.get("tool_name", ""),
+            "args_summary": matching_record.get("args_summary", ""),
+            "restore_hint": matching_record.get("restore_hint", ""),
+            "has_more": has_more,
+            "preview": preview,
+        },
+        ensure_ascii=False,
+    )
 
 
 def maybe_persist_tool_result(

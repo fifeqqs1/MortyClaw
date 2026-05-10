@@ -43,7 +43,6 @@ def build_approval_context_hash(state: dict, pending_tool_calls: list[dict] | No
     payload = {
         "goal": str(state.get("goal", "") or "").strip(),
         "current_project_path": str(state.get("current_project_path", "") or "").strip(),
-        "permission_mode": str(state.get("permission_mode", "") or "").strip().lower(),
         "current_step_index": current_step_index,
         "todo_revision": int(state.get("todo_revision", 0) or 0),
         "current_step": {

@@ -12,6 +12,18 @@ from mortyclaw.core.runtime_store import (
     get_conversation_writer,
     get_session_repository,
 )
+from mortyclaw.core.tools.builtins.sessions import search_sessions_impl
+
+
+class FakeSummaryLLM:
+    def invoke(self, messages, config=None):
+        return type("Response", (), {"content": "摘要：历史会话中运行了 pytest，并确认工具结果通过。"})()
+
+
+class SlowSummaryLLM:
+    def invoke(self, messages, config=None):
+        time.sleep(2)
+        return type("Response", (), {"content": "late"})()
 
 
 class ConversationStoreTests(unittest.TestCase):
@@ -132,6 +144,102 @@ class ConversationStoreTests(unittest.TestCase):
         )
 
         self.assertEqual([item["thread_id"] for item in results], ["other-thread"])
+
+    def test_search_sessions_tool_can_return_raw_results(self):
+        self.repo.append_messages(
+            thread_id="raw-thread",
+            turn_id="turn-raw",
+            messages=[HumanMessage(content="以前用 pytest 检查 runtime", id="msg-raw")],
+        )
+
+        payload = json.loads(search_sessions_impl(
+            query="pytest runtime",
+            role_filter="",
+            limit=3,
+            include_current=True,
+            include_tool_results=True,
+            current_thread_id="current",
+            get_conversation_repository_fn=lambda: self.repo,
+            summarize=False,
+        ))
+
+        self.assertTrue(payload["success"])
+        self.assertFalse(payload["summarize"])
+        self.assertIn("hits", payload["results"][0])
+        self.assertNotIn("summary_status", payload["results"][0])
+
+    def test_search_sessions_tool_summarizes_with_injected_llm(self):
+        self.repo.append_messages(
+            thread_id="summary-thread",
+            turn_id="turn-summary",
+            messages=[HumanMessage(content="以前用 pytest 检查 runtime 工具结果", id="msg-summary")],
+        )
+
+        payload = json.loads(search_sessions_impl(
+            query="pytest runtime",
+            role_filter="",
+            limit=3,
+            include_current=True,
+            include_tool_results=True,
+            current_thread_id="current",
+            get_conversation_repository_fn=lambda: self.repo,
+            summarize=True,
+            summary_timeout_seconds=5,
+            llm_factory=lambda: FakeSummaryLLM(),
+        ))
+
+        self.assertTrue(payload["success"])
+        self.assertTrue(payload["summarize"])
+        self.assertEqual(payload["results"][0]["summary_status"], "generated")
+        self.assertIn("pytest", payload["results"][0]["summary"])
+        self.assertIn("raw_hits", payload["results"][0])
+
+    def test_search_sessions_tool_falls_back_without_llm(self):
+        self.repo.append_messages(
+            thread_id="fallback-thread",
+            turn_id="turn-fallback",
+            messages=[HumanMessage(content="以前修过 session_search 的 fallback", id="msg-fallback")],
+        )
+
+        payload = json.loads(search_sessions_impl(
+            query="session_search fallback",
+            role_filter="",
+            limit=3,
+            include_current=True,
+            include_tool_results=True,
+            current_thread_id="current",
+            get_conversation_repository_fn=lambda: self.repo,
+            summarize=True,
+            llm_factory=None,
+        ))
+
+        self.assertEqual(payload["results"][0]["summary_status"], "fallback_raw")
+        self.assertIn("原始命中预览", payload["results"][0]["summary"])
+
+    def test_search_sessions_summary_timeout_returns_fallback(self):
+        self.repo.append_messages(
+            thread_id="timeout-thread",
+            turn_id="turn-timeout",
+            messages=[HumanMessage(content="以前修过 session_search timeout", id="msg-timeout")],
+        )
+        start = time.perf_counter()
+
+        payload = json.loads(search_sessions_impl(
+            query="session_search timeout",
+            role_filter="",
+            limit=3,
+            include_current=True,
+            include_tool_results=True,
+            current_thread_id="current",
+            get_conversation_repository_fn=lambda: self.repo,
+            summarize=True,
+            summary_timeout_seconds=1,
+            llm_factory=lambda: SlowSummaryLLM(),
+        ))
+        elapsed = time.perf_counter() - start
+
+        self.assertLess(elapsed, 1.8)
+        self.assertEqual(payload["results"][0]["summary_status"], "timeout")
 
     def test_branch_metadata_and_compression_summary_are_persisted(self):
         self.session_repo.upsert_session(thread_id="parent-thread", display_name="parent-thread")

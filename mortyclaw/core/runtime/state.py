@@ -50,6 +50,7 @@ class WorkingMemoryState(TypedDict, total=False):
     compact_generation: int
     last_compact_at: str
     last_compact_reason: str
+    structured_handoff: dict | str
 
 
 class AgentState(TypedDict):
@@ -107,6 +108,7 @@ class AgentState(TypedDict):
     final_answer: str
     run_status: str
     current_project_path: NotRequired[str]
+    structured_handoff: NotRequired[dict | str]
 
 
 def build_working_memory_snapshot(
@@ -156,4 +158,5 @@ def build_working_memory_snapshot(
         "compact_generation": int(state.get("compact_generation", 0) or 0),
         "last_compact_at": state.get("last_compact_at", ""),
         "last_compact_reason": state.get("last_compact_reason", ""),
+        "structured_handoff": state.get("structured_handoff", ""),
     }

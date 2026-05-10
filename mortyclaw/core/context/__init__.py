@@ -19,7 +19,7 @@ from .handoff import (
 )
 from .safety import SanitizedContext, sanitize_context_text, scan_context_text
 from .subdirectory_hints import update_subdirectory_context_from_messages
-from .window import trim_context_messages
+from .window import compact_context_messages_deterministic, trim_context_messages
 
 __all__ = [
     "AgentState",
@@ -42,6 +42,7 @@ __all__ = [
     "render_trusted_turn_context",
     "sanitize_context_text",
     "scan_context_text",
+    "compact_context_messages_deterministic",
     "trim_context_messages",
     "update_subdirectory_context_from_messages",
 ]

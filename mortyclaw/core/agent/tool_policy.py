@@ -8,11 +8,13 @@ from ..planning import (
 )
 
 
+REQUEST_TOOL_SCHEMA_TOOL_NAME = "request_tool_schema"
 FAST_PATH_EXCLUDED_TOOL_NAMES = {"update_todo_list"}
 GENERAL_UTILITY_TOOL_NAMES = {
     "get_current_time",
     "calculator",
     "get_system_model_info",
+    "restore_context_artifact",
     "search_sessions",
     "save_user_profile",
     "list_office_files",
@@ -45,9 +47,11 @@ CODING_TOOL_NAMES = {
     "run_project_command",
     "execute_tool_program",
     "delegate_subagent",
+    "delegate_subagents",
     "wait_subagents",
     "list_subagents",
     "cancel_subagent",
+    "cancel_subagents",
     "update_todo_list",
 }
 OFFICE_TOOL_NAMES = {
@@ -75,6 +79,7 @@ SLOW_DESTRUCTIVE_TOOL_NAMES = {
     "execute_office_shell",
     "execute_tool_program",
     "delegate_subagent",
+    "delegate_subagents",
 }
 PLAN_MODE_BLOCKED_TOOL_NAMES = set(SLOW_DESTRUCTIVE_TOOL_NAMES)
 AUTO_MODE_BLOCKED_TOOL_NAMES = {"execute_office_shell"}
@@ -92,6 +97,45 @@ AUTONOMOUS_PROJECT_WRITE_TOOL_NAMES = {
     *GENERAL_UTILITY_TOOL_NAMES,
     *CODING_TOOL_NAMES,
 }
+CODING_WORKBENCH_EAGER_TOOL_NAMES = {
+    "read_project_file",
+    "search_project_code",
+    "show_git_diff",
+    "edit_project_file",
+    "write_project_file",
+    "apply_project_patch",
+    "run_project_tests",
+    "run_project_command",
+    "delegate_subagent",
+    "delegate_subagents",
+    "wait_subagents",
+    "list_subagents",
+    "cancel_subagent",
+    "cancel_subagents",
+}
+BASE_EAGER_TOOL_NAMES = {
+    REQUEST_TOOL_SCHEMA_TOOL_NAME,
+    "get_current_time",
+    "calculator",
+    "get_system_model_info",
+}
+
+
+def _tool_map(tools: list[BaseTool]) -> dict[str, BaseTool]:
+    return {
+        str(getattr(tool, "name", "") or ""): tool
+        for tool in tools
+        if str(getattr(tool, "name", "") or "").strip()
+    }
+
+
+def _select_available_tools_by_names(tools: list[BaseTool], names: set[str]) -> list[BaseTool]:
+    tool_by_name = _tool_map(tools)
+    return [
+        tool_by_name[name]
+        for name in sorted(names)
+        if name in tool_by_name
+    ]
 
 
 def _query_needs_research(query: str) -> bool:
@@ -266,3 +310,71 @@ def build_pending_tool_approval_reason(tool_calls: list[dict] | None) -> str:
     if not tool_names:
         return ""
     return f"本轮待执行的高风险工具调用：{', '.join(tool_names)}"
+
+
+def route_eager_tool_names(
+    state: AgentState,
+    *,
+    active_route: str,
+    slow_execution_mode: str,
+    current_plan_step: dict | None,
+    latest_user_query: str,
+) -> set[str]:
+    eager_names = set(BASE_EAGER_TOOL_NAMES)
+    current_project_path = str(state.get("current_project_path", "") or "").strip()
+    task_text = str(state.get("goal", "") or latest_user_query or "").strip()
+
+    if (
+        active_route == "slow"
+        and slow_execution_mode == "autonomous"
+        and current_project_path
+        and (
+            str(state.get("risk_level", "") or "").strip().lower() == "high"
+            or looks_like_file_write_request(task_text)
+            or step_matches_test_action(task_text)
+            or step_matches_shell_action(task_text)
+        )
+    ):
+        eager_names |= CODING_WORKBENCH_EAGER_TOOL_NAMES
+
+    if active_route == "slow" and current_plan_step is not None:
+        description = str(current_plan_step.get("description", "") or "")
+        intent = str(current_plan_step.get("intent", "") or "").strip().lower()
+        if current_project_path and (
+            intent in {"implement", "edit", "shell_execute", "test_verify"}
+            or looks_like_file_write_request(description)
+            or step_matches_test_action(description)
+            or step_matches_shell_action(description)
+        ):
+            eager_names |= CODING_WORKBENCH_EAGER_TOOL_NAMES
+
+    return eager_names
+
+
+def split_tools_for_deferred_schema(
+    selected_tools: list[BaseTool],
+    *,
+    expanded_tool_names: set[str] | None = None,
+    eager_tool_names: set[str] | None = None,
+) -> tuple[list[BaseTool], list[BaseTool], list[BaseTool]]:
+    selected_by_name = _tool_map(selected_tools)
+    if REQUEST_TOOL_SCHEMA_TOOL_NAME not in selected_by_name:
+        return list(selected_tools), [], []
+    expanded_names = set(expanded_tool_names or set())
+    eager_names = set(eager_tool_names or set()) | {REQUEST_TOOL_SCHEMA_TOOL_NAME}
+    bound_names = {
+        name
+        for name in selected_by_name
+        if name in eager_names or name in expanded_names
+    }
+    if REQUEST_TOOL_SCHEMA_TOOL_NAME in selected_by_name:
+        bound_names.add(REQUEST_TOOL_SCHEMA_TOOL_NAME)
+
+    bound_tools = _select_available_tools_by_names(selected_tools, bound_names)
+    deferred_tools = [
+        selected_by_name[name]
+        for name in sorted(selected_by_name)
+        if name not in {str(getattr(tool, "name", "") or "") for tool in bound_tools}
+    ]
+    expanded_tools = _select_available_tools_by_names(selected_tools, expanded_names)
+    return bound_tools or selected_tools, deferred_tools, expanded_tools

@@ -86,6 +86,20 @@ def build_permission_mode_message(state) -> str:
     )
 
 
+def _build_high_risk_reply_hint(state) -> str:
+    permission_mode = str(state.get("permission_mode", "") or "").strip().lower()
+    if permission_mode == "auto":
+        return "请回复“取消”/“稍后再说”终止。"
+    if permission_mode == "plan":
+        return "当前任务处于 `plan` 只读模式；如需继续执行，请改用 `确认执行`、`ask` 或 `auto`。"
+    if permission_mode == "ask":
+        return "请回复“确认执行”继续，或回复“取消”/“稍后再说”终止。"
+    return (
+        "请回复“确认执行”仅执行当前操作，回复 `ask` 在后续高风险操作前逐次确认，"
+        "回复 `auto` 自动执行允许的高风险操作，或回复“取消”/“稍后再说”终止。"
+    )
+
+
 def build_approval_message(state) -> str:
     current_step = get_current_plan_step(state)
     plan = state.get("plan", []) or []
@@ -110,7 +124,7 @@ def build_approval_message(state) -> str:
                 f"原因：{state.get('approval_reason') or '需要在执行前确认风险。'}\n"
                 "这是高风险操作，是否现在继续？\n"
                 f"{pending_tool_summary}\n"
-                "请回复“确认执行”继续，或回复“取消”/“稍后再说”终止。"
+                f"{_build_high_risk_reply_hint(state)}"
             )
         plan_lines = "\n".join(
             f"{step['step']}. {step['description']} [risk={step['risk_level']}]"
@@ -121,7 +135,7 @@ def build_approval_message(state) -> str:
             "该任务已进入 slow path，且包含高风险操作。\n"
             f"原因：{state.get('approval_reason') or '需要在执行前确认风险。'}\n"
             f"计划：\n{plan_lines if plan_lines else '暂无计划'}{summary_suffix}\n\n"
-            "请回复“确认执行”继续，或回复“取消”/“稍后再说”终止。"
+            f"{_build_high_risk_reply_hint(state)}"
         )
 
     total_steps = len(plan)
@@ -137,12 +151,12 @@ def build_approval_message(state) -> str:
             f"原因：{state.get('approval_reason') or build_approval_reason(current_step)}\n"
             "这是高风险操作，是否现在继续？\n"
             f"{pending_tool_summary}\n"
-            "请回复“确认执行”继续，或回复“取消”/“稍后再说”终止。"
+            f"{_build_high_risk_reply_hint(state)}"
         )
 
     summary_suffix = f"\n{pending_tool_summary}" if pending_tool_summary else ""
     return (
         f"待执行步骤 {current_step['step']}/{total_steps}：{current_step['description']}\n\n"
         f"原因：{state.get('approval_reason') or build_approval_reason(current_step)}\n"
-        f"这是高风险操作，是否现在继续？{summary_suffix}\n请回复“确认执行”继续，或回复“取消”/“稍后再说”终止。"
+        f"这是高风险操作，是否现在继续？{summary_suffix}\n{_build_high_risk_reply_hint(state)}"
     )

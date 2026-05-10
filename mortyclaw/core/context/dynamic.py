@@ -215,8 +215,8 @@ def render_trusted_turn_context(
                     "3. 有真实进展时立刻更新 Todo；完成就标为 completed。",
                     "4. 不要为了“先分析”而把任务停在泛泛的项目审查阶段。",
                     "5. 高风险工具服从现有 permission、approval 与 tool scope 约束。",
-                    "6. 当任务明显需要 3 次以上工具调用、循环筛选搜索命中、批量改文件、或读改测闭环时，优先使用 `execute_tool_program`。",
-                    "7. 只有当子任务边界非常清晰、且与你当前下一步不冲突时，才使用 worker 工具；写型 worker 必须声明 `write_scope`。",
+                    "6. 当任务属于同一条连续工具链，例如搜索→读取→修改→测试，且明显需要多次工具调用时，优先使用 `execute_tool_program`。",
+                    "7. `delegate_subagents` 用于复杂可并行任务：多个独立分支、每个分支有实际搜索/读取/验证成本，或会产生大量中间材料而挤占主上下文。批量委派时每个 task 必须提供 `context_brief` 和 `deliverables`；工具会返回 worker 摘要，成功返回后直接汇总，只有明确缺口才做目标文件级补查。部分 worker 失败时说明缺口，不自动再次委派，除非用户明确要求或缺口阻塞最终答案。",
                 ]
             )
             if active_todo_summary:

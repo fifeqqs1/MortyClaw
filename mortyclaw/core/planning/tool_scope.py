@@ -59,9 +59,11 @@ PROGRAMMATIC_PROJECT_EDIT_TOOL_NAMES = {
 }
 DELEGATED_TOOL_NAMES = {
     "delegate_subagent",
+    "delegate_subagents",
     "wait_subagents",
     "list_subagents",
     "cancel_subagent",
+    "cancel_subagents",
     "read_project_file",
     "search_project_code",
     "show_git_diff",

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime, timezone
 from typing import Any, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
@@ -58,6 +59,11 @@ class HandoffToolResult(TypedDict, total=False):
     args_summary: str
     result_summary: str
     related_path: str
+    evidence_path: str
+    command: str
+    error: str
+    status: str
+    artifact_ref: str
     artifact_path: str
     artifact_persisted: bool
 
@@ -70,17 +76,27 @@ class HandoffTodoItem(TypedDict, total=False):
 
 class HandoffSummary(TypedDict, total=False):
     version: int
+    updated_at: str
+    source_message_range: dict[str, Any]
+    compression_count: int
     goal: str
+    current_state: str
     active_task: HandoffActiveTask
     completed_steps: list[HandoffStep]
+    open_steps: list[HandoffStep]
     pending_steps: list[HandoffStep]
+    key_files: list[HandoffFileArtifact]
+    modified_files: list[HandoffFileArtifact]
     files_touched: list[HandoffFileArtifact]
     commands_run: list[HandoffCommandResult]
     tool_results: list[HandoffToolResult]
+    worker_results: list[dict[str, Any]]
+    errors: list[str]
     todos: list[HandoffTodoItem]
     context_notes: list[str]
     open_questions: list[str]
     risks: list[str]
+    next_action: str
     last_user_intent: str
 
 
@@ -102,6 +118,10 @@ def _compact_dict(value: dict[str, Any]) -> dict[str, Any]:
 
 def _safe_json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _extract_json_object(text: str | None) -> dict[str, Any] | None:
@@ -189,6 +209,11 @@ def _normalize_tool_result(item: dict[str, Any]) -> HandoffToolResult:
         "args_summary": _truncate_text(item.get("args_summary", ""), 220),
         "result_summary": _truncate_text(item.get("result_summary", ""), 220),
         "related_path": _truncate_text(item.get("related_path", ""), 220),
+        "evidence_path": _truncate_text(item.get("evidence_path", "") or item.get("related_path", ""), 220),
+        "command": _truncate_text(item.get("command", ""), 220),
+        "error": _truncate_text(item.get("error", ""), 220),
+        "status": _truncate_text(item.get("status", "") or item.get("result_status", ""), 60),
+        "artifact_ref": _truncate_text(item.get("artifact_ref", "") or item.get("ref_id", ""), 120),
         "artifact_path": _truncate_text(item.get("artifact_path", ""), 260),
         "artifact_persisted": bool(item.get("artifact_persisted", False)),
     })
@@ -220,6 +245,7 @@ def _normalize_todo_item(item: dict[str, Any]) -> HandoffTodoItem:
 def normalize_handoff_summary(data: dict[str, Any]) -> HandoffSummary:
     active_task = _normalize_active_task(data.get("active_task") or {})
     goal = _truncate_text(data.get("goal", "") or active_task.get("goal", ""), 260)
+    source_message_range = data.get("source_message_range") if isinstance(data.get("source_message_range"), dict) else {}
 
     completed_steps = _dedupe_dicts(
         [_normalize_step(item) for item in data.get("completed_steps", []) if isinstance(item, dict)],
@@ -254,17 +280,35 @@ def normalize_handoff_summary(data: dict[str, Any]) -> HandoffSummary:
 
     return _compact_dict({
         "version": HANDOFF_SUMMARY_VERSION,
+        "updated_at": _truncate_text(data.get("updated_at", ""), 80),
+        "source_message_range": source_message_range,
+        "compression_count": int(data.get("compression_count", 0) or 0),
         "goal": goal,
+        "current_state": _truncate_text(data.get("current_state", ""), 260),
         "active_task": active_task,
         "completed_steps": completed_steps,
+        "open_steps": pending_steps,
         "pending_steps": pending_steps,
+        "key_files": files_touched,
+        "modified_files": _dedupe_dicts(
+            [_normalize_file(item) for item in data.get("modified_files", []) if isinstance(item, dict)],
+            limit=MAX_FILE_ITEMS,
+            keys=("path", "reason"),
+        ),
         "files_touched": files_touched,
         "commands_run": commands_run,
         "tool_results": tool_results,
+        "worker_results": _dedupe_dicts(
+            [item for item in data.get("worker_results", []) if isinstance(item, dict)],
+            limit=MAX_TOOL_RESULT_ITEMS,
+            keys=("worker_id", "role", "summary"),
+        ),
+        "errors": _dedupe_strings([str(item) for item in data.get("errors", [])], limit=MAX_RISK_ITEMS),
         "todos": todos,
         "context_notes": _dedupe_strings([str(item) for item in data.get("context_notes", [])], limit=MAX_NOTE_ITEMS),
         "open_questions": _dedupe_strings([str(item) for item in data.get("open_questions", [])], limit=MAX_OPEN_QUESTION_ITEMS),
         "risks": _dedupe_strings([str(item) for item in data.get("risks", [])], limit=MAX_RISK_ITEMS),
+        "next_action": _truncate_text(data.get("next_action", ""), 220),
         "last_user_intent": _truncate_text(data.get("last_user_intent", ""), 220),
     })
 
@@ -357,13 +401,17 @@ def _message_text(message: BaseMessage) -> str:
 def _extract_tool_artifact_metadata(message: ToolMessage) -> dict[str, Any]:
     additional_kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
     artifact = dict(additional_kwargs.get("mortyclaw_artifact") or {})
+    context_stub = dict(additional_kwargs.get("mortyclaw_context_stub") or {})
+    if not artifact:
+        artifact = context_stub
     if not artifact:
         return {}
     return _compact_dict({
+        "artifact_ref": _truncate_text(artifact.get("ref_id", "") or artifact.get("artifact_ref", ""), 120),
         "artifact_path": _truncate_text(artifact.get("artifact_path", ""), 260),
-        "artifact_size": int(artifact.get("artifact_size", 0) or 0),
+        "artifact_size": int(artifact.get("artifact_size", 0) or artifact.get("original_chars", 0) or 0),
         "preview_chars": int(artifact.get("preview_chars", 0) or 0),
-        "artifact_persisted": bool(artifact.get("artifact_persisted", False)),
+        "artifact_persisted": bool(artifact.get("artifact_persisted", False) or artifact.get("artifact_path")),
     })
 
 
@@ -832,6 +880,26 @@ def build_discarded_context_payload(discarded_msgs: list[BaseMessage]) -> list[d
             continue
 
         if isinstance(message, AIMessage):
+            context_stub = dict(getattr(message, "additional_kwargs", {}) or {}).get("mortyclaw_context_stub") or {}
+            if isinstance(context_stub, dict) and context_stub.get("kind") == "context_tool_stub":
+                for tool_item in context_stub.get("tools", []) or []:
+                    if not isinstance(tool_item, dict):
+                        continue
+                    events.append(_compact_dict({
+                        "role": "tool",
+                        "tool_call_id": tool_item.get("tool_call_id", ""),
+                        "tool_name": tool_item.get("tool_name", ""),
+                        "args_summary": tool_item.get("args_summary", ""),
+                        "path": tool_item.get("path", ""),
+                        "paths": [tool_item.get("path", "")] if tool_item.get("path") else [],
+                        "result_status": tool_item.get("status", "stubbed"),
+                        "result_summary": tool_item.get("result_summary", ""),
+                        "result_preview": tool_item.get("result_summary", ""),
+                        "artifact_ref": tool_item.get("artifact_ref", ""),
+                        "artifact_path": tool_item.get("artifact_path", ""),
+                        "artifact_persisted": bool(tool_item.get("artifact_path") or tool_item.get("artifact_ref")),
+                    }))
+                continue
             tool_calls = _normalize_tool_calls(message)
             if _message_preview(message):
                 events.append({
@@ -983,6 +1051,11 @@ def _extract_message_signals(discarded_msgs: list[BaseMessage]) -> dict[str, Any
                 "args_summary": str(event.get("args_summary", "")),
                 "result_summary": observation,
                 "related_path": paths[0] if paths else "",
+                "evidence_path": paths[0] if paths else str(event.get("evidence_path", "")),
+                "command": command,
+                "error": str(event.get("risk", "") or event.get("error", "")),
+                "status": str(event.get("result_status", "") or event.get("status", "")),
+                "artifact_ref": str(event.get("artifact_ref", "") or event.get("ref_id", "")).strip(),
                 "artifact_path": str(event.get("artifact_path", "")).strip(),
                 "artifact_persisted": bool(event.get("artifact_persisted", False)),
             })
@@ -1069,24 +1142,56 @@ def _extract_state_signals(state: dict[str, Any] | None) -> dict[str, Any]:
     })
 
 
+def _build_source_message_range(messages: list[BaseMessage]) -> dict[str, Any]:
+    if not messages:
+        return {}
+    ids = [
+        str(getattr(message, "id", "") or "").strip()
+        for message in messages
+        if str(getattr(message, "id", "") or "").strip()
+    ]
+    roles = [str(getattr(message, "type", "") or type(message).__name__) for message in messages]
+    return _compact_dict({
+        "start_message_id": ids[0] if ids else "",
+        "end_message_id": ids[-1] if ids else "",
+        "message_count": len(messages),
+        "roles": roles[:MAX_EVENT_ITEMS],
+    })
+
+
 def _merge_handoff_parts(previous: dict[str, Any], extracted: dict[str, Any], llm_data: dict[str, Any] | None) -> HandoffSummary:
     llm_data = llm_data or {}
+    previous_count = int(previous.get("compression_count", 0) or 0)
+    source_message_range = (
+        llm_data.get("source_message_range")
+        or extracted.get("source_message_range")
+        or previous.get("source_message_range")
+        or {}
+    )
     merged = normalize_handoff_summary({
+        "updated_at": _utc_now_iso(),
+        "source_message_range": source_message_range,
+        "compression_count": previous_count + 1,
         "goal": llm_data.get("goal") or extracted.get("goal") or previous.get("goal", ""),
+        "current_state": llm_data.get("current_state") or extracted.get("current_state") or previous.get("current_state", ""),
         "active_task": {
             **(previous.get("active_task") or {}),
             **(extracted.get("active_task") or {}),
             **(llm_data.get("active_task") or {}),
         },
         "completed_steps": (llm_data.get("completed_steps") or []) + (extracted.get("completed_steps") or []) + (previous.get("completed_steps") or []),
-        "pending_steps": (llm_data.get("pending_steps") or []) or (extracted.get("pending_steps") or []) or (previous.get("pending_steps") or []),
+        "pending_steps": (llm_data.get("open_steps") or llm_data.get("pending_steps") or []) or (extracted.get("pending_steps") or []) or (previous.get("pending_steps") or previous.get("open_steps") or []),
         "files_touched": (llm_data.get("files_touched") or []) + (extracted.get("files_touched") or []) + (previous.get("files_touched") or []),
+        "modified_files": (llm_data.get("modified_files") or []) + (extracted.get("modified_files") or []) + (previous.get("modified_files") or []),
         "commands_run": (llm_data.get("commands_run") or []) + (extracted.get("commands_run") or []) + (previous.get("commands_run") or []),
         "tool_results": (llm_data.get("tool_results") or []) + (extracted.get("tool_results") or []) + (previous.get("tool_results") or []),
+        "worker_results": (llm_data.get("worker_results") or []) + (extracted.get("worker_results") or []) + (previous.get("worker_results") or []),
+        "errors": (llm_data.get("errors") or []) + (extracted.get("errors") or []) + (previous.get("errors") or []),
         "todos": (llm_data.get("todos") or []) or (previous.get("todos") or []),
         "context_notes": (llm_data.get("context_notes") or []) + (extracted.get("context_notes") or []) + (previous.get("context_notes") or []),
         "open_questions": (llm_data.get("open_questions") or []) + (extracted.get("open_questions") or []) + (previous.get("open_questions") or []),
         "risks": (llm_data.get("risks") or []) + (extracted.get("risks") or []) + (previous.get("risks") or []),
+        "next_action": llm_data.get("next_action") or extracted.get("next_action") or previous.get("next_action", ""),
         "last_user_intent": llm_data.get("last_user_intent") or extracted.get("last_user_intent") or previous.get("last_user_intent", ""),
     })
     return merged
@@ -1103,6 +1208,7 @@ def build_fallback_handoff_summary(
     extracted = {
         **_extract_state_signals(state),
         **_extract_message_signals(discarded_msgs),
+        "source_message_range": _build_source_message_range(discarded_msgs),
     }
     merged = _merge_handoff_parts(previous, extracted, None)
     return _safe_json_dumps(merged)
@@ -1119,15 +1225,16 @@ def build_handoff_summary_prompt(
         "current_handoff": current_handoff,
         "legacy_note": legacy_note,
         "state_snapshot": build_state_snapshot(state),
+        "source_message_range": _build_source_message_range(discarded_msgs),
         "discarded_events": build_discarded_context_payload(discarded_msgs),
     }
     return (
         "你是 MortyClaw 的上下文压缩器。你的任务是把旧上下文压缩成结构化 HandoffSummary。\n\n"
         "必须遵守：\n"
         "1. 只输出一个 JSON 对象，不要 Markdown，不要解释。\n"
-        "2. 优先保留当前目标、活动任务、已完成步骤、待完成步骤、关键文件、命令结果、工具结果、风险。\n"
+        "2. 优先保留当前目标、当前状态、已完成步骤、待完成步骤、关键文件、命令结果、工具结果、风险。\n"
         "3. 旧工具输出必须剪枝，只保留 command/path/result_preview，不要复制长日志全文。\n"
-        "4. 如果输入中出现 persisted-output 或 artifact_path，表示完整工具结果已落本地；不要复制全文，只保留结论、工具名、相关路径和 artifact 位置。\n"
+        "4. 如果输入中出现 persisted-output、artifact_path 或 artifact_ref，表示完整工具结果已落本地；不要复制全文，只保留结论、工具名、相关路径、artifact_ref 和 artifact 位置。\n"
         "5. Todo 现在由独立状态维护，不要花篇幅重写完整 Todo 列表；只有在兼容旧结构确有必要时才填写 todos。\n"
         "6. 输出必须面向执行交接，突出当前目标、已完成动作、待处理动作、关键命令/测试结论、风险阻塞和最近用户意图。\n"
         "7. 不要记录用户长期偏好；那部分由长期记忆模块负责。\n"
@@ -1135,7 +1242,11 @@ def build_handoff_summary_prompt(
         "目标 JSON 结构：\n"
         "{\n"
         '  "version": 1,\n'
+        '  "updated_at": "",\n'
+        '  "source_message_range": {},\n'
+        '  "compression_count": 0,\n'
         '  "goal": "",\n'
+        '  "current_state": "",\n'
         '  "active_task": {\n'
         '    "route": "",\n'
         '    "goal": "",\n'
@@ -1149,14 +1260,20 @@ def build_handoff_summary_prompt(
         '    "last_error": ""\n'
         "  },\n"
         '  "completed_steps": [{"step": 0, "description": "", "status": "", "risk_level": "", "result_summary": ""}],\n'
+        '  "open_steps": [{"step": 0, "description": "", "status": "", "risk_level": ""}],\n'
         '  "pending_steps": [{"step": 0, "description": "", "status": "", "risk_level": ""}],\n'
         '  "todos": [{"id": "", "content": "", "status": ""}],\n'
+        '  "key_files": [{"path": "", "reason": "", "last_observation": ""}],\n'
+        '  "modified_files": [{"path": "", "reason": "", "last_observation": ""}],\n'
         '  "files_touched": [{"path": "", "reason": "", "last_observation": ""}],\n'
         '  "commands_run": [{"tool_name": "", "command": "", "status": "", "result_summary": ""}],\n'
-        '  "tool_results": [{"tool_name": "", "args_summary": "", "result_summary": "", "related_path": ""}],\n'
+        '  "tool_results": [{"tool_name": "", "args_summary": "", "result_summary": "", "related_path": "", "evidence_path": "", "command": "", "error": "", "status": "", "artifact_ref": "", "artifact_path": ""}],\n'
+        '  "worker_results": [{"worker_id": "", "role": "", "status": "", "summary": "", "blocking_issue": ""}],\n'
+        '  "errors": [""],\n'
         '  "context_notes": [""],\n'
         '  "open_questions": [""],\n'
         '  "risks": [""],\n'
+        '  "next_action": "",\n'
         '  "last_user_intent": ""\n'
         "}\n\n"
         f"输入数据：\n{json.dumps(prompt_payload, ensure_ascii=False, indent=2)}"
@@ -1175,6 +1292,7 @@ def merge_handoff_summary(
     extracted = {
         **_extract_state_signals(state),
         **_extract_message_signals(discarded_msgs),
+        "source_message_range": _build_source_message_range(discarded_msgs),
     }
     llm_summary = parse_handoff_summary(llm_output_text) if llm_output_text else None
     merged = _merge_handoff_parts(previous, extracted, llm_summary or {})

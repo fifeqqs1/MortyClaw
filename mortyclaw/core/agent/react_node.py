@@ -10,6 +10,7 @@ from langchain_core.tools import BaseTool
 
 from ..config import (
     CONTEXT_COMPRESSION_BUDGET_TOKENS,
+    CONTEXT_INTERACTIVE_BUDGET_TOKENS,
     CONTEXT_LAYER2_TRIGGER_RATIO,
     CONTEXT_LAYER3_TRIGGER_RATIO,
     ENABLE_DYNAMIC_CONTEXT_FOR_FAST_AGENT,
@@ -27,7 +28,9 @@ from ..context.window import estimate_text_tokens
 from ..context.window import classify_context_pressure
 from ..prompts.provider_cache import apply_provider_prompt_cache
 from ..runtime.todos import hydrate_todos_from_state_or_session
+from ..runtime_context import set_active_tool_scope_names
 from .recovery import _extract_classified_error
+from .tool_policy import REQUEST_TOOL_SCHEMA_TOOL_NAME
 
 
 CONTEXT_TRIM_KEEP_TOKENS = 220000
@@ -92,6 +95,32 @@ def _serialize_tool_schema_text(tools: list[BaseTool]) -> str:
     rendered = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     _TOOL_SCHEMA_TEXT_CACHE[signature] = rendered
     return rendered
+
+
+def _tools_by_name(tools: list[BaseTool]) -> dict[str, BaseTool]:
+    return {
+        str(getattr(tool, "name", "") or ""): tool
+        for tool in tools
+        if str(getattr(tool, "name", "") or "").strip()
+    }
+
+
+def _extract_requested_deferred_tool_names(messages: list) -> set[str]:
+    requested: set[str] = set()
+    for message in reversed(messages or []):
+        if getattr(message, "type", "") != "tool":
+            break
+        if str(getattr(message, "name", "") or "") != REQUEST_TOOL_SCHEMA_TOOL_NAME:
+            continue
+        payload = _extract_tool_payload(message)
+        if not payload:
+            continue
+        for name in payload.get("requested_tools", []) or []:
+            normalized = str(name or "").strip()
+            if normalized:
+                requested.add(normalized)
+        break
+    return requested
 
 
 def _should_use_direct_arxiv_shortcut(
@@ -303,10 +332,13 @@ class ReactNodeDependencies:
     select_tools_for_fast_route_fn: object
     apply_permission_mode_to_tools_fn: object
     select_tools_for_autonomous_slow_fn: object
+    split_tools_for_deferred_schema_fn: object
+    route_eager_tool_names_fn: object
     should_direct_route_to_arxiv_rag_fn: object
     arxiv_rag_tool: object
     extract_passthrough_payload_fn: object
     trim_context_messages_fn: object
+    compact_context_messages_deterministic_fn: object
     summarize_discarded_context_fn: object
     conversation_writer: object
     build_long_term_memory_prompt_fn: object
@@ -364,7 +396,8 @@ def run_react_agent_node(
         )
     )
     active_route = working_state.get("route", route_mode)
-    formatted_session_prompt = deps.build_session_memory_prompt_fn(
+    worker_isolation_mode = bool(working_state.get("worker_isolation_mode", False))
+    formatted_session_prompt = "" if worker_isolation_mode else deps.build_session_memory_prompt_fn(
         thread_id,
         limit=deps.session_memory_prompt_limit,
     )
@@ -560,16 +593,18 @@ def run_react_agent_node(
     active_llm_with_tools = llm_with_tools
     allowed_tool_names: set[str] = {getattr(tool, "name", "") for tool in all_tools}
     selected_route_tools: list[BaseTool] = list(all_tools)
+    all_tools_by_name = _tools_by_name(all_tools)
+    request_schema_tool = all_tools_by_name.get(REQUEST_TOOL_SCHEMA_TOOL_NAME)
     if active_route == "fast":
         fast_tools = deps.select_tools_for_fast_route_fn(
             working_state,
             all_tools,
             latest_user_query=latest_user_query,
         )
+        if request_schema_tool and request_schema_tool not in fast_tools:
+            fast_tools = list(fast_tools) + [request_schema_tool]
         selected_route_tools = list(fast_tools)
         allowed_tool_names = {getattr(tool, "name", "") for tool in fast_tools}
-        if fast_tools:
-            active_llm_with_tools = llm.bind_tools(fast_tools)
 
     if active_route == "slow" and current_plan_step is not None:
         effective_user_query = current_plan_step["description"]
@@ -590,12 +625,10 @@ def run_react_agent_node(
             allowed_step_tools,
             permission_mode=permission_mode,
         )
+        if request_schema_tool and request_schema_tool not in allowed_step_tools:
+            allowed_step_tools = list(allowed_step_tools) + [request_schema_tool]
         selected_route_tools = list(allowed_step_tools)
         allowed_tool_names = {getattr(tool, "name", "") for tool in allowed_step_tools}
-        if allowed_step_tools:
-            active_llm_with_tools = llm.bind_tools(allowed_step_tools)
-        else:
-            active_llm_with_tools = llm if hasattr(llm, "invoke") else llm_with_tools
     elif active_route == "slow" and slow_execution_mode == "autonomous":
         autonomous_tools = deps.select_tools_for_autonomous_slow_fn(
             working_state,
@@ -611,14 +644,44 @@ def run_react_agent_node(
             autonomous_tools,
             permission_mode=permission_mode,
         )
+        if request_schema_tool and request_schema_tool not in autonomous_tools:
+            autonomous_tools = list(autonomous_tools) + [request_schema_tool]
         selected_route_tools = list(autonomous_tools)
         allowed_tool_names = {getattr(tool, "name", "") for tool in autonomous_tools}
-        if autonomous_tools:
-            active_llm_with_tools = llm.bind_tools(autonomous_tools)
-        else:
-            active_llm_with_tools = llm if hasattr(llm, "invoke") else llm_with_tools
     elif active_route == "slow" and state.get("goal") and deps.is_affirmative_approval_response_fn(latest_user_query):
         effective_user_query = state["goal"]
+
+    requested_deferred_names = _extract_requested_deferred_tool_names(raw_messages)
+    unauthorized_requested_names = sorted(name for name in requested_deferred_names if name not in allowed_tool_names)
+    if unauthorized_requested_names:
+        deps.audit_logger_instance.log_event(
+            thread_id=thread_id,
+            event="system_action",
+            content=(
+                "ignored unauthorized deferred tool schema request: "
+                + ", ".join(unauthorized_requested_names)
+            ),
+        )
+    expanded_tool_names = requested_deferred_names & allowed_tool_names
+    eager_tool_names = deps.route_eager_tool_names_fn(
+        working_state,
+        active_route=active_route,
+        slow_execution_mode=slow_execution_mode,
+        current_plan_step=current_plan_step,
+        latest_user_query=latest_user_query,
+    ) & allowed_tool_names
+    bound_tools, deferred_tools, expanded_tools = deps.split_tools_for_deferred_schema_fn(
+        selected_route_tools,
+        expanded_tool_names=expanded_tool_names,
+        eager_tool_names=eager_tool_names,
+    )
+    if not bound_tools:
+        bound_tools = bound_tools or selected_route_tools
+    if bound_tools:
+        active_llm_with_tools = llm.bind_tools(bound_tools)
+    else:
+        active_llm_with_tools = llm if hasattr(llm, "invoke") else llm_with_tools
+    set_active_tool_scope_names([getattr(tool, "name", "") for tool in bound_tools])
 
     route_source = str(working_state.get("route_source", "") or "")
     if _should_use_direct_arxiv_shortcut(
@@ -685,7 +748,13 @@ def run_react_agent_node(
             state_updates.update(subdirectory_updates)
             working_state.update(subdirectory_updates)
 
-    long_term_prompt = deps.build_long_term_memory_prompt_fn(latest_user_query)
+    if worker_isolation_mode:
+        long_term_prompt = ""
+    else:
+        try:
+            long_term_prompt = deps.build_long_term_memory_prompt_fn(latest_user_query, thread_id=thread_id)
+        except TypeError:
+            long_term_prompt = deps.build_long_term_memory_prompt_fn(latest_user_query)
     use_dynamic_context = (
         ENABLE_DYNAMIC_CONTEXT_FOR_SLOW_AGENT
         if active_route == "slow"
@@ -732,66 +801,110 @@ def run_react_agent_node(
             extra_context_texts.append(long_term_prompt)
         if current_summary:
             extra_context_texts.append(render_handoff_summary(current_summary))
+    deferred_catalog_preview = ""
+    if deferred_tools:
+        try:
+            from ..prompts.builder import render_deferred_tool_catalog
+
+            deferred_catalog_preview = render_deferred_tool_catalog(deferred_tools)
+        except Exception:
+            deferred_catalog_preview = ""
+    if deferred_catalog_preview:
+        extra_context_texts.append(deferred_catalog_preview)
 
     context_pressure = classify_context_pressure(
         raw_messages,
         model_name=model_name,
-        budget_tokens=CONTEXT_COMPRESSION_BUDGET_TOKENS,
-        reserve_tokens=CONTEXT_NON_MESSAGE_RESERVE_TOKENS,
+        budget_tokens=CONTEXT_INTERACTIVE_BUDGET_TOKENS,
+        reserve_tokens=0,
         extra_texts=extra_context_texts,
         layer2_trigger_ratio=CONTEXT_LAYER2_TRIGGER_RATIO,
         layer3_trigger_ratio=CONTEXT_LAYER3_TRIGGER_RATIO,
     )
-    if str(context_pressure.get("level", "low")) == "low":
-        final_msgs, discarded_msgs = raw_messages, []
-    else:
-        final_msgs, discarded_msgs = deps.trim_context_messages_fn(
-            raw_messages,
-            trigger_tokens=1,
-            keep_tokens=CONTEXT_TRIM_KEEP_TOKENS,
-            reserve_tokens=CONTEXT_NON_MESSAGE_RESERVE_TOKENS,
-            model_name=model_name,
-        )
-    raw_trim_stats = getattr(deps.trim_context_messages_fn, "_last_stats", {})
-    trim_stats = dict(raw_trim_stats) if isinstance(raw_trim_stats, dict) else {}
-
-    if discarded_msgs:
+    pressure_level = str(context_pressure.get("level", "low") or "low")
+    if pressure_level != "low":
         deps.audit_logger_instance.log_event(
             thread_id=thread_id,
-            event="system_action",
+            event="context_pressure_detected",
             content=(
-                "context trim triggered; consolidating discarded messages "
-                f"(pressure={str(context_pressure.get('level', 'unknown'))}, "
-                f"artifact_messages_seen={int(trim_stats.get('artifact_messages_seen', 0) or 0)}, "
-                f"tool_results_pruned={int(trim_stats.get('tool_results_pruned', 0) or 0)}, "
-                f"tool_pairs_repaired={int(trim_stats.get('tool_pairs_repaired', 0) or 0)}, "
-                f"discarded_middle_count={int(trim_stats.get('discarded_middle_count', len(discarded_msgs)) or 0)})"
+                f"context pressure {pressure_level}: "
+                f"total={int(context_pressure.get('total_used_tokens', 0) or 0)}, "
+                f"budget={int(context_pressure.get('budget_tokens', 0) or 0)}, "
+                f"ratio={float(context_pressure.get('usage_ratio', 0.0) or 0.0):.3f}"
+            ),
+        )
+    if pressure_level == "low":
+        final_msgs, discarded_msgs, deterministic_result = raw_messages, [], None
+    else:
+        deterministic_result = deps.compact_context_messages_deterministic_fn(
+            raw_messages,
+            thread_id=thread_id,
+            turn_id=turn_id,
+            model_name=model_name,
+            persist_artifacts=True,
+        )
+        final_msgs = list(getattr(deterministic_result, "kept_messages", raw_messages) or raw_messages)
+        discarded_msgs = list(getattr(deterministic_result, "removed_messages", []) or [])
+        deterministic_stats = dict(getattr(deterministic_result, "stats", {}) or {})
+        deps.audit_logger_instance.log_event(
+            thread_id=thread_id,
+            event="context_deterministic_compaction",
+            content=(
+                f"deterministic context compaction applied "
+                f"(pressure={pressure_level}, "
+                f"stubbed={int(deterministic_stats.get('stubbed_count', 0) or 0)}, "
+                f"safely_discarded={int(deterministic_stats.get('safely_discarded_count', 0) or 0)}, "
+                f"removed={int(deterministic_stats.get('removed_count', len(discarded_msgs)) or 0)}, "
+                f"artifacts={int(deterministic_stats.get('artifact_count', 0) or 0)})"
+            ),
+        )
+        if int(deterministic_stats.get("artifact_count", 0) or 0):
+            deps.audit_logger_instance.log_event(
+                thread_id=thread_id,
+                event="context_artifact_persisted",
+                content=f"context compaction persisted {int(deterministic_stats.get('artifact_count', 0) or 0)} artifact(s)",
+            )
+        if active_route == "slow" and discarded_msgs:
+            state_updates.setdefault("messages", [])
+            state_updates["messages"].extend([RemoveMessage(id=m.id) for m in discarded_msgs if m.id])
+            state_updates["messages"].extend(list(getattr(deterministic_result, "stub_messages", []) or []))
+
+    if discarded_msgs and pressure_level == "high":
+        deps.audit_logger_instance.log_event(
+            thread_id=thread_id,
+            event="context_llm_summary_merge",
+            content=(
+                "high pressure context merge started "
+                f"(discarded={len(discarded_msgs)}, stubbed={len(getattr(deterministic_result, 'stub_messages', []) or [])})"
             ),
         )
         active_summary = deps.summarize_discarded_context_fn(
             llm,
             current_summary,
-            discarded_msgs,
+            discarded_msgs + list(getattr(deterministic_result, "stub_messages", []) or []),
             thread_id,
-            state=working_state,
+            state=working_state | state_updates,
             timeout_seconds=deps.context_summary_timeout_seconds,
         )
 
         state_updates["summary"] = active_summary
-        state_updates.setdefault("messages", [])
-        state_updates["messages"].extend([RemoveMessage(id=m.id) for m in discarded_msgs if m.id])
+        state_updates["structured_handoff"] = active_summary
         deps.conversation_writer.record_summary(
             thread_id=thread_id,
             summary=active_summary,
             summary_type="structured_handoff",
             messages=discarded_msgs,
-            metadata={"discarded_message_count": len(discarded_msgs)},
+            metadata={
+                "discarded_message_count": len(discarded_msgs),
+                "pressure_level": pressure_level,
+                "deterministic_stats": getattr(deterministic_result, "stats", {}) if deterministic_result else {},
+            },
         )
     else:
         active_summary = current_summary
 
     compact_reason = ""
-    if discarded_msgs:
+    if discarded_msgs and pressure_level == "high":
         latest_user_message = next(
             (message for message in reversed(raw_messages) if getattr(message, "type", "") == "human"),
             None,
@@ -866,6 +979,7 @@ def run_react_agent_node(
             and deps.is_affirmative_approval_response_fn(latest_user_query)
         ),
         dynamic_context_envelope=dynamic_context_envelope,
+        deferred_tools=deferred_tools,
     )
     if isinstance(prompt_bundle, tuple):
         sys_prompt, llm_messages = prompt_bundle
@@ -882,7 +996,7 @@ def run_react_agent_node(
         if isinstance(message.content, str):
             message.content = message.content.encode("utf-8", "ignore").decode("utf-8")
 
-    tool_schema_text = _serialize_tool_schema_text(selected_route_tools)
+    tool_schema_text = _serialize_tool_schema_text(bound_tools)
     tool_group_signature = _hash_text(tool_schema_text)
     prompt_hashes["tools"] = tool_group_signature
     prompt_token_stats["tools_schema"] = estimate_text_tokens(tool_schema_text)
@@ -906,6 +1020,9 @@ def run_react_agent_node(
         cache_stats={**prompt_cache_stats, **provider_cache_stats},
         slow_execution_mode=slow_execution_mode,
         tool_group_signature=tool_group_signature,
+        bound_tool_names=[getattr(tool, "name", "") for tool in bound_tools],
+        deferred_tool_names=[getattr(tool, "name", "") for tool in deferred_tools],
+        expanded_deferred_tool_names=[getattr(tool, "name", "") for tool in expanded_tools],
     )
 
     response = None

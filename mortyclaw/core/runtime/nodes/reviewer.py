@@ -275,7 +275,7 @@ def make_reviewer_node(
         if state.get("current_step_index", 0) + 1 < len(updated_plan):
             next_step_index = state.get("current_step_index", 0) + 1
             next_step = updated_plan[next_step_index]
-            next_step_requires_approval = step_requires_approval_fn(next_step)
+            next_step_requires_approval = False
             todos = plan_to_todos_fn(updated_plan, next_step_index) if should_enable_todos_fn("slow", updated_plan) else []
             next_todo_revision = int(state.get("todo_revision", 0) or 0) + (1 if todos else 0)
             if todos:
@@ -311,7 +311,7 @@ def make_reviewer_node(
                 "pending_approval": next_step_requires_approval,
                 "approval_granted": False,
                 "approval_prompted": False,
-                "approval_reason": build_approval_reason_fn(next_step) if next_step_requires_approval else "",
+                "approval_reason": "",
                 "retry_count": 0,
                 "last_error": "",
                 "last_error_kind": "",

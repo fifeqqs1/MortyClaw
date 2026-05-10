@@ -7,9 +7,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from mortyclaw.core.agent.tool_policy import (
+    route_eager_tool_names,
     select_tools_for_autonomous_slow,
     select_tools_for_fast_route,
     select_tools_for_structured_slow,
+    split_tools_for_deferred_schema,
 )
 from mortyclaw.core.planning import select_tools_for_current_step
 from mortyclaw.core.prompt_builder import build_react_prompt_bundle
@@ -185,6 +187,79 @@ class TestPromptLayers(unittest.TestCase):
         research = select_tools_for_fast_route({}, tools, latest_user_query="搜索今天的最新新闻")
         self.assertNotIn("tavily_web_search", {tool.name for tool in baseline})
         self.assertIn("tavily_web_search", {tool.name for tool in research})
+
+    def test_autonomous_project_write_eager_bundle_includes_coding_workbench(self):
+        eager = route_eager_tool_names(
+            {
+                "current_project_path": "/tmp/demo",
+                "goal": "修改代码并运行测试",
+                "risk_level": "high",
+            },
+            active_route="slow",
+            slow_execution_mode="autonomous",
+            current_plan_step=None,
+            latest_user_query="修改代码并运行测试",
+        )
+        self.assertIn("read_project_file", eager)
+        self.assertIn("show_git_diff", eager)
+        self.assertIn("apply_project_patch", eager)
+        self.assertIn("run_project_command", eager)
+
+    def test_deferred_schema_split_expands_multiple_requested_tools(self):
+        @tool
+        def request_tool_schema(tool_names: list[str], reason: str = "") -> str:
+            """request schema"""
+            return ""
+
+        @tool
+        def tavily_web_search(query: str = "") -> str:
+            """search"""
+            return ""
+
+        @tool
+        def summarize_content(url: str = "") -> str:
+            """summarize"""
+            return ""
+
+        @tool
+        def get_current_time() -> str:
+            """time"""
+            return ""
+
+        tools = [request_tool_schema, tavily_web_search, summarize_content, get_current_time]
+        bound, deferred, expanded = split_tools_for_deferred_schema(
+            tools,
+            expanded_tool_names={"tavily_web_search", "summarize_content", "not_allowed"},
+            eager_tool_names={"get_current_time"},
+        )
+        bound_names = {item.name for item in bound}
+        deferred_names = {item.name for item in deferred}
+        expanded_names = {item.name for item in expanded}
+        self.assertIn("request_tool_schema", bound_names)
+        self.assertIn("get_current_time", bound_names)
+        self.assertIn("tavily_web_search", bound_names)
+        self.assertIn("summarize_content", bound_names)
+        self.assertNotIn("not_allowed", bound_names)
+        self.assertEqual(set(), deferred_names)
+        self.assertEqual({"tavily_web_search", "summarize_content"}, expanded_names)
+
+    def test_deferred_catalog_is_stably_sorted(self):
+        from mortyclaw.core.prompts.builder import render_deferred_tool_catalog
+
+        @tool
+        def z_tool(value: str = "") -> str:
+            """Z desc"""
+            return ""
+
+        @tool
+        def a_tool(value: str = "") -> str:
+            """A desc"""
+            return ""
+
+        first = render_deferred_tool_catalog([z_tool, a_tool])
+        second = render_deferred_tool_catalog([a_tool, z_tool])
+        self.assertEqual(first, second)
+        self.assertLess(first.find("- a_tool:"), first.find("- z_tool:"))
 
 
 if __name__ == "__main__":

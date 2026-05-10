@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langchain_core.tools import BaseTool
 
 from ..context import render_reference_messages, render_trusted_turn_context
 from ..context.window import estimate_messages_tokens, estimate_text_tokens
@@ -174,6 +175,35 @@ def _build_overflow_summary_block(overflow_summary: str) -> dict | None:
     }
 
 
+def _short_tool_description(tool: BaseTool) -> str:
+    description = " ".join(str(getattr(tool, "description", "") or "").split())
+    if not description:
+        return "按需工具。"
+    first_sentence = description.split("。", 1)[0].split(".", 1)[0].strip()
+    text = first_sentence or description
+    return text[:157] + "..." if len(text) > 160 else text
+
+
+def render_deferred_tool_catalog(deferred_tools: list[BaseTool]) -> str:
+    tool_items = sorted(
+        (
+            str(getattr(tool, "name", "") or "").strip(),
+            _short_tool_description(tool),
+        )
+        for tool in (deferred_tools or [])
+        if str(getattr(tool, "name", "") or "").strip()
+    )
+    if not tool_items:
+        return ""
+    lines = [
+        "可按需加载的 deferred 工具目录：",
+        "如果你预计接下来会连续使用多个 deferred 工具，请先调用 `request_tool_schema`，并一次性传入多个 tool_names。",
+        "不要猜测 deferred 工具参数；等下一轮完整 schema 加载后再调用目标工具。",
+    ]
+    lines.extend(f"- {name}: {description}" for name, description in tool_items)
+    return "\n".join(lines)
+
+
 def _turn_render_cache_key(
     *,
     state,
@@ -263,8 +293,8 @@ def _build_base_system_prompt(state) -> str:
         "1. 如果信息可通过工具获取，就先查再答，不要臆测。\n"
         "2. 不要伪装完成；如果需要继续执行，就提出真实工具调用。\n"
         "3. 任何高风险工具都必须服从现有 permission、approval 和 tool scope 约束。\n"
-        "4. 当任务明显需要 3 次以上工具调用、循环筛选搜索命中、批量改文件、或读改测闭环时，可优先使用 `execute_tool_program`。\n"
-        "5. 只有当子任务边界非常清晰、且不会阻塞你当前下一步时，才使用 worker 工具；写型 worker 必须声明 `write_scope`。"
+        "4. 当任务属于同一条连续工具链，例如搜索→读取→修改→测试，且明显需要多次工具调用时，可优先使用 `execute_tool_program`。\n"
+        "5. 当复杂任务包含多个互不依赖、边界清晰、且各自需要独立搜索/读文件/验证的分支时，优先考虑 `delegate_subagents`；它适合隔离大量中间材料、减轻主 agent 上下文压力。写型 worker 必须声明最小 `write_scope`；`delegate_subagents` 会返回 worker 摘要，成功返回后直接基于摘要汇总，只有明确缺口才做目标文件级补查。部分 worker 失败时说明缺口，不自动再次委派，除非用户明确要求或缺口阻塞最终答案。"
     )
     _BASE_PROMPT_CACHE[cache_key] = prompt
     return prompt
@@ -281,6 +311,7 @@ def build_react_prompt_bundle(
     current_plan_step: dict | None,
     include_approved_goal_context: bool,
     dynamic_context_envelope: dict | None = None,
+    deferred_tools: list[BaseTool] | None = None,
 ) -> PromptBundle:
     slow_execution_mode = str(state.get("slow_execution_mode", "") or "").strip().lower()
     todo_block = render_todo_for_prompt(state.get("active_todos") or state.get("todos"))
@@ -356,6 +387,16 @@ def build_react_prompt_bundle(
         todo_snapshot_block = _build_todo_snapshot_block(todo_block)
         if todo_snapshot_block is not None:
             envelope["untrusted_blocks"].append(todo_snapshot_block)
+    deferred_catalog_text = render_deferred_tool_catalog(list(deferred_tools or []))
+    if deferred_catalog_text:
+        envelope["untrusted_blocks"].append({
+            "label": "deferred-tool-catalog",
+            "source": "tool-catalog:deferred",
+            "trust": "untrusted",
+            "flags": [],
+            "cache_hit": True,
+            "text": deferred_catalog_text,
+        })
 
     turn_cache_key = _turn_render_cache_key(
         state=render_state,
@@ -409,11 +450,13 @@ def build_react_prompt_bundle(
         "base": _hash_text(base_system_prompt),
         "trusted_turn": _hash_text(trusted_turn_context),
         "reference": _hash_text(reference_text),
+        "deferred_catalog": _hash_text(deferred_catalog_text),
     }
     token_stats = {
         "base": estimate_text_tokens(base_system_prompt),
         "trusted_turn": estimate_text_tokens(trusted_turn_context),
         "reference": sum(estimate_text_tokens(str(message.content or "")) for message in reference_messages),
+        "deferred_catalog": estimate_text_tokens(deferred_catalog_text),
         "conversation": estimate_messages_tokens(conversation_messages),
         "goal_continuation": estimate_text_tokens(str(goal_continuation.content or "")) if goal_continuation is not None else 0,
         "tools_schema": 0,

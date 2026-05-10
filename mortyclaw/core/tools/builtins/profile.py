@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+from ...memory_safety import scan_memory_content
+
 
 def save_user_profile_impl(
     new_content: str,
@@ -14,6 +16,10 @@ def save_user_profile_impl(
     user_profile_memory_id: str,
     user_profile_memory_type: str,
 ) -> str:
+    safety = scan_memory_content(new_content)
+    if not safety.ok:
+        return f"记忆档案写入被拒绝：{safety.reason}"
+
     get_memory_store_fn().upsert_memory(build_memory_record_fn(
         memory_id=user_profile_memory_id,
         layer="long_term",
@@ -29,4 +35,4 @@ def save_user_profile_impl(
     with open(profile_path, "w", encoding="utf-8") as handle:
         handle.write(new_content)
 
-    return "记忆档案已成功覆写更新。新的人设画像已生效。"
+    return "记忆档案已成功持久化；当前会话的 frozen snapshot 不会被中途改写，新画像将在下一会话或刷新 snapshot 后进入 prompt。"

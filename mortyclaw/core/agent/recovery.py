@@ -137,7 +137,7 @@ def _tool_program_followup(_state: AgentState, message: ToolMessage) -> dict:
 
 def _worker_tool_followup(state: AgentState, message: ToolMessage) -> dict:
     tool_name = str(getattr(message, "name", None) or "")
-    if tool_name not in {"delegate_subagent", "wait_subagents", "list_subagents", "cancel_subagent"}:
+    if tool_name not in {"delegate_subagent", "delegate_subagents", "wait_subagents", "list_subagents", "cancel_subagent", "cancel_subagents"}:
         return {}
     payload = _extract_tool_json_payload(message)
     if not payload:
@@ -147,6 +147,16 @@ def _worker_tool_followup(state: AgentState, message: ToolMessage) -> dict:
         worker_id = str(payload.get("worker_id", "") or "")
         if worker_id and worker_id not in active_workers:
             active_workers.append(worker_id)
+        return {
+            "active_workers": active_workers,
+            "worker_waiting_on": active_workers,
+        }
+    if tool_name == "delegate_subagents" and payload.get("success"):
+        active_workers = list(state.get("active_workers", []) or [])
+        for worker_id in (payload.get("worker_ids", []) or []):
+            normalized_worker_id = str(worker_id or "").strip()
+            if normalized_worker_id and normalized_worker_id not in active_workers:
+                active_workers.append(normalized_worker_id)
         return {
             "active_workers": active_workers,
             "worker_waiting_on": active_workers,

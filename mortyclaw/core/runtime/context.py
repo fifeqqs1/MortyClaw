@@ -16,6 +16,10 @@ _active_program_run_id_var: contextvars.ContextVar[str] = contextvars.ContextVar
     "mortyclaw_active_program_run_id",
     default="",
 )
+_active_tool_scope_names_var: contextvars.ContextVar[tuple[str, ...]] = contextvars.ContextVar(
+    "mortyclaw_active_tool_scope_names",
+    default=(),
+)
 _thread_local = threading.local()
 
 
@@ -63,3 +67,24 @@ def get_active_program_run_id(default: str = "") -> str:
     if program_run_id:
         return program_run_id
     return getattr(_thread_local, "program_run_id", "") or default
+
+
+def set_active_tool_scope_names(tool_names) -> tuple[str, ...]:
+    normalized = tuple(
+        sorted({
+            str(name or "").strip()
+            for name in (tool_names or [])
+            if str(name or "").strip()
+        })
+    )
+    _active_tool_scope_names_var.set(normalized)
+    _thread_local.tool_scope_names = normalized
+    return normalized
+
+
+def get_active_tool_scope_names(default: tuple[str, ...] | None = None) -> tuple[str, ...]:
+    fallback = tuple(default or ())
+    names = _active_tool_scope_names_var.get(fallback)
+    if names:
+        return tuple(names)
+    return tuple(getattr(_thread_local, "tool_scope_names", fallback) or fallback)

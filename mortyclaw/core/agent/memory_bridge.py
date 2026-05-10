@@ -106,6 +106,7 @@ def build_long_term_memory_prompt(
     user_profile_memory_type: str,
     long_term_memory_prompt_limit: int,
     prompt_cache,
+    memory_snapshot=None,
 ) -> str:
     return _build_long_term_memory_prompt_impl(
         query,
@@ -115,6 +116,7 @@ def build_long_term_memory_prompt(
         user_profile_memory_type=user_profile_memory_type,
         long_term_memory_prompt_limit=long_term_memory_prompt_limit,
         prompt_cache=prompt_cache,
+        memory_snapshot=memory_snapshot,
     )
 
 

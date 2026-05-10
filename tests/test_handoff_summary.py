@@ -85,3 +85,43 @@ class TestHandoffSummary(unittest.TestCase):
         self.assertEqual(summary["tool_results"][0]["artifact_path"], "/tmp/cmd-artifact.txt")
         self.assertTrue(summary["tool_results"][0]["artifact_persisted"])
         self.assertTrue(any("/tmp/cmd-artifact.txt" in note for note in summary["context_notes"]))
+
+    def test_merge_handoff_summary_keeps_context_stub_artifact_ref_and_metadata(self):
+        stub_payload = {
+            "kind": "context_tool_stub",
+            "tools": [{
+                "tool_call_id": "call-stub",
+                "tool_name": "run_project_tests",
+                "args_summary": "{\"command\":\"pytest\"}",
+                "result_summary": "FAILED tests/test_demo.py",
+                "artifact_ref": "ctx_call_stub",
+                "artifact_path": "/tmp/context-artifact.txt",
+                "status": "stubbed",
+                "command": "pytest",
+            }],
+        }
+        messages = [
+            AIMessage(
+                content="[compacted-tool-interaction]\n{}",
+                additional_kwargs={"mortyclaw_context_stub": stub_payload},
+            )
+        ]
+
+        summary_text = merge_handoff_summary("", messages, state={"goal": "修测试"})
+        summary = parse_handoff_summary(summary_text)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["compression_count"], 1)
+        self.assertTrue(summary.get("updated_at"))
+        self.assertEqual(summary["source_message_range"]["message_count"], 1)
+        self.assertEqual(summary["tool_results"][0]["artifact_ref"], "ctx_call_stub")
+        self.assertEqual(summary["tool_results"][0]["artifact_path"], "/tmp/context-artifact.txt")
+        self.assertTrue(summary["tool_results"][0]["artifact_persisted"])
+
+    def test_merge_handoff_summary_increments_compression_count(self):
+        previous = '{"version":1,"compression_count":2,"tool_results":[]}'
+        summary_text = merge_handoff_summary(previous, [], state={"goal": "继续"})
+        summary = parse_handoff_summary(summary_text)
+
+        self.assertIsNotNone(summary)
+        self.assertEqual(summary["compression_count"], 3)

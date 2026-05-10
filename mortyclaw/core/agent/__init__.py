@@ -17,6 +17,7 @@ from ..context import (
     assemble_dynamic_context,
     build_planner_dynamic_context_text,
     build_working_memory_snapshot,
+    compact_context_messages_deterministic,
     trim_context_messages,
     update_subdirectory_context_from_messages,
 )
@@ -25,6 +26,7 @@ from ..logger import audit_logger
 from ..memory import (
     DEFAULT_LONG_TERM_SCOPE,
     USER_PROFILE_MEMORY_TYPE,
+    build_memory_snapshot,
     build_memory_record,
     get_async_memory_writer,
     get_memory_store,
@@ -105,13 +107,16 @@ from .tool_policy import (
     apply_permission_mode_to_tools as _apply_permission_mode_to_tools,
     build_pending_tool_approval_reason as _build_pending_tool_approval_reason,
     destructive_tool_calls as _destructive_tool_calls,
+    route_eager_tool_names as _route_eager_tool_names,
     select_tools_for_fast_route as _select_tools_for_fast_route,
     select_tools_for_autonomous_slow as _select_tools_for_autonomous_slow,
     select_tools_for_structured_slow as _select_tools_for_structured_slow,
+    split_tools_for_deferred_schema as _split_tools_for_deferred_schema,
 )
 
 
 _memory_prompt_cache = MemoryPromptCache()
+_memory_snapshots: dict[str, object] = {}
 
 
 def _sync_session_memory_from_query(query: str | None, thread_id: str) -> dict:
@@ -165,7 +170,19 @@ def _load_long_term_profile_content() -> str:
     )
 
 
-def _build_long_term_memory_prompt(query: str | None) -> str:
+def _build_long_term_memory_prompt(query: str | None, thread_id: str | None = None) -> str:
+    memory_snapshot = None
+    if thread_id:
+        memory_snapshot = _memory_snapshots.setdefault(
+            thread_id,
+            build_memory_snapshot(
+                session_id=thread_id,
+                get_memory_store_fn=get_memory_store,
+                memory_dir=MEMORY_DIR,
+                default_long_term_scope=DEFAULT_LONG_TERM_SCOPE,
+                user_profile_memory_type=USER_PROFILE_MEMORY_TYPE,
+            ),
+        )
     return _build_long_term_memory_prompt_impl(
         query,
         get_memory_store_fn=get_memory_store,
@@ -174,6 +191,7 @@ def _build_long_term_memory_prompt(query: str | None) -> str:
         user_profile_memory_type=USER_PROFILE_MEMORY_TYPE,
         long_term_memory_prompt_limit=LONG_TERM_MEMORY_PROMPT_LIMIT,
         prompt_cache=_memory_prompt_cache,
+        memory_snapshot=memory_snapshot,
     )
 
 
@@ -290,11 +308,14 @@ def _run_react_agent_node(
         select_tools_for_fast_route_fn=_select_tools_for_fast_route,
         apply_permission_mode_to_tools_fn=_apply_permission_mode_to_tools,
         select_tools_for_autonomous_slow_fn=_select_tools_for_autonomous_slow,
+        split_tools_for_deferred_schema_fn=_split_tools_for_deferred_schema,
+        route_eager_tool_names_fn=_route_eager_tool_names,
         select_tools_for_structured_slow_fn=_select_tools_for_structured_slow,
         should_direct_route_to_arxiv_rag_fn=_should_direct_route_to_arxiv_rag,
         arxiv_rag_tool=arxiv_rag_ask,
         extract_passthrough_payload_fn=_extract_passthrough_payload,
         trim_context_messages_fn=trim_context_messages,
+        compact_context_messages_deterministic_fn=compact_context_messages_deterministic,
         summarize_discarded_context_fn=_summarize_discarded_context,
         conversation_writer=get_conversation_writer(),
         build_long_term_memory_prompt_fn=_build_long_term_memory_prompt,

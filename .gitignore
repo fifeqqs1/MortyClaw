@@ -5,6 +5,10 @@ rick/
 
 
 .env
+.env.*
+!.env.example
+
+*:Zone.Identifier
 
 
 __pycache__/
@@ -25,6 +29,7 @@ workspace/state.sqlite3
 *.sqlite3-wal
 workspace/tasks.json
 workspace/runtime/
+workspace/
 
 workspace/memory/*.md
 workspace/office

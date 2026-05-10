@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import re
+import uuid
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Sequence
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
+
+from ..runtime.tool_results import persist_context_artifact
 
 try:
     import tiktoken
@@ -21,6 +26,18 @@ COMPRESSED_TOOL_RESULT_LIMIT = 480
 PROTECT_HEAD_NON_SYSTEM = 3
 TAIL_MIN_MESSAGES = 8
 TRIMMED_TOOL_RESULT_STUB = "上下文压缩说明：原始 tool result 已被裁剪，请以 handoff summary 中的 tool_results/result_summary 为准。"
+CONTEXT_TOOL_STUB_PREFIX = "[compacted-tool-interaction]"
+CONTEXT_STUB_PREVIEW_CHARS = 320
+
+
+@dataclass(frozen=True)
+class DeterministicCompactionResult:
+    kept_messages: list[BaseMessage]
+    removed_messages: list[BaseMessage]
+    stub_messages: list[BaseMessage]
+    stubbed_groups: list[dict[str, Any]]
+    safely_discarded: list[BaseMessage]
+    stats: dict[str, int]
 
 
 def _serialize_content(value: Any) -> str:
@@ -159,6 +176,255 @@ def _tool_call_ids_from_message(message: BaseMessage) -> list[str]:
         if normalized_id:
             tool_ids.append(normalized_id)
     return tool_ids
+
+
+def _normalized_tool_calls(message: BaseMessage) -> list[dict[str, Any]]:
+    if not isinstance(message, AIMessage):
+        return []
+    raw_tool_calls = getattr(message, "tool_calls", None) or getattr(message, "additional_kwargs", {}).get("tool_calls") or []
+    normalized: list[dict[str, Any]] = []
+    for index, tool_call in enumerate(raw_tool_calls):
+        if not isinstance(tool_call, dict):
+            continue
+        if "function" in tool_call:
+            function = tool_call.get("function") or {}
+            args = function.get("arguments") or {}
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except json.JSONDecodeError:
+                    args = {"raw": args}
+            normalized.append({
+                "id": str(tool_call.get("id") or f"tool-call-{index}"),
+                "name": str(function.get("name") or ""),
+                "args": args if isinstance(args, dict) else {"raw": args},
+            })
+        else:
+            args = tool_call.get("args") or {}
+            normalized.append({
+                "id": str(tool_call.get("id") or tool_call.get("tool_call_id") or f"tool-call-{index}"),
+                "name": str(tool_call.get("name") or ""),
+                "args": args if isinstance(args, dict) else {"raw": args},
+            })
+    return normalized
+
+
+def _truncate_inline(value: Any, limit: int = 260) -> str:
+    text = _serialize_content(value)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "..."
+
+
+def _tool_args_summary(args: dict[str, Any]) -> str:
+    return _truncate_inline(json.dumps(args or {}, ensure_ascii=False, sort_keys=True), 360)
+
+
+def _primary_path_from_args(args: dict[str, Any]) -> str:
+    for key in ("filepath", "path", "file_path", "pathspec"):
+        value = str(args.get(key, "") or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _read_restore_hint(tool_name: str, args: dict[str, Any], ref_id: str) -> str:
+    path = _primary_path_from_args(args)
+    start_line = args.get("start_line") or args.get("line_start")
+    end_line = args.get("end_line") or args.get("line_end")
+    if tool_name == "read_project_file" and path:
+        range_hint = ""
+        if start_line or end_line:
+            range_hint = f", start_line={start_line or ''}, end_line={end_line or ''}"
+        return (
+            f"优先重新调用 read_project_file(filepath={path!r}{range_hint}) 获取最新内容；"
+            f"如需当时原始输出，调用 restore_context_artifact(ref_id={ref_id!r})。"
+        )
+    if tool_name == "read_office_file" and path:
+        return (
+            f"可重新调用 read_office_file(path={path!r}) 获取当前文件内容；"
+            f"如需当时原始输出，调用 restore_context_artifact(ref_id={ref_id!r})。"
+        )
+    return f"调用 restore_context_artifact(ref_id={ref_id!r}) 恢复被裁剪的原始工具结果预览。"
+
+
+def _group_messages(messages: list[BaseMessage]) -> list[list[BaseMessage]]:
+    groups: list[list[BaseMessage]] = []
+    index = 0
+    while index < len(messages):
+        message = messages[index]
+        if isinstance(message, AIMessage) and _tool_call_ids_from_message(message):
+            expected_ids = set(_tool_call_ids_from_message(message))
+            group = [message]
+            index += 1
+            while index < len(messages):
+                candidate = messages[index]
+                if not isinstance(candidate, ToolMessage):
+                    break
+                tool_call_id = str(getattr(candidate, "tool_call_id", "") or "").strip()
+                if tool_call_id not in expected_ids:
+                    break
+                group.append(candidate)
+                index += 1
+            groups.append(group)
+            continue
+        groups.append([message])
+        index += 1
+    return groups
+
+
+def _group_has_tool_interaction(group: list[BaseMessage]) -> bool:
+    return any(isinstance(message, ToolMessage) for message in group) or any(
+        isinstance(message, AIMessage) and bool(_tool_call_ids_from_message(message))
+        for message in group
+    )
+
+
+def _group_tool_call_map(group: list[BaseMessage]) -> dict[str, dict[str, Any]]:
+    calls: dict[str, dict[str, Any]] = {}
+    for message in group:
+        for call in _normalized_tool_calls(message):
+            call_id = str(call.get("id", "") or "")
+            if call_id:
+                calls[call_id] = call
+    return calls
+
+
+def _tool_group_dedupe_key(group: list[BaseMessage]) -> tuple[str, str] | None:
+    calls = _group_tool_call_map(group)
+    for message in group:
+        if not isinstance(message, ToolMessage):
+            continue
+        call = calls.get(str(getattr(message, "tool_call_id", "") or ""), {})
+        tool_name = str(getattr(message, "name", "") or call.get("name", "") or "").strip()
+        args = dict(call.get("args") or {})
+        if tool_name == "search_project_code":
+            key_payload = {
+                "query": args.get("query") or args.get("pattern") or "",
+                "file_glob": args.get("file_glob") or "",
+                "path": args.get("path") or args.get("root") or "",
+            }
+            return tool_name, json.dumps(key_payload, ensure_ascii=False, sort_keys=True)
+        if tool_name in {"read_project_file", "read_office_file"}:
+            key_payload = {
+                "path": _primary_path_from_args(args),
+                "start_line": args.get("start_line") or args.get("line_start") or "",
+                "end_line": args.get("end_line") or args.get("line_end") or "",
+            }
+            return tool_name, json.dumps(key_payload, ensure_ascii=False, sort_keys=True)
+    return None
+
+
+def _looks_like_process_only_assistant(message: BaseMessage) -> bool:
+    if not isinstance(message, AIMessage) or _tool_call_ids_from_message(message):
+        return False
+    content = _serialize_content(getattr(message, "content", "")).strip()
+    if not content or len(content) > 260:
+        return False
+    lowered = content.lower()
+    process_markers = (
+        "我现在",
+        "现在我",
+        "让我",
+        "接下来",
+        "继续查看",
+        "继续分析",
+        "let me",
+        "i will",
+        "i'll",
+        "now i",
+    )
+    conclusion_markers = ("结论", "因此", "所以", "summary", "发现", "原因", "结果")
+    return any(marker in lowered for marker in process_markers) and not any(
+        marker in lowered for marker in conclusion_markers
+    )
+
+
+def _build_tool_stub(
+    *,
+    group: list[BaseMessage],
+    thread_id: str,
+    turn_id: str,
+    model_name: str,
+    persist_artifacts: bool,
+) -> tuple[AIMessage, dict[str, Any]]:
+    encoder = _resolve_token_encoder(model_name)
+    calls = _group_tool_call_map(group)
+    artifacts: list[dict[str, Any]] = []
+    tool_summaries: list[dict[str, Any]] = []
+    original_tokens = _estimate_messages_tokens(group, encoder=encoder)
+
+    for index, message in enumerate(group):
+        if not isinstance(message, ToolMessage):
+            continue
+        tool_call_id = str(getattr(message, "tool_call_id", "") or f"tool-{index}")
+        call = calls.get(tool_call_id, {})
+        tool_name = str(getattr(message, "name", "") or call.get("name", "") or "tool")
+        args = dict(call.get("args") or {})
+        content = _serialize_content(getattr(message, "content", ""))
+        ref_id = f"ctx_{tool_call_id}_{uuid.uuid4().hex[:8]}"
+        restore_hint = _read_restore_hint(tool_name, args, ref_id)
+        artifact_record = {
+            "ref_id": ref_id,
+            "artifact_path": "",
+            "content_hash": "",
+            "original_chars": len(content),
+            "tool_name": tool_name,
+            "args_summary": _tool_args_summary(args),
+            "restore_hint": restore_hint,
+        }
+        if persist_artifacts and content:
+            artifact_record = persist_context_artifact(
+                content=content,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                tool_name=tool_name,
+                args_summary=_tool_args_summary(args),
+                restore_hint=restore_hint,
+                ref_id=ref_id,
+                metadata={
+                    "tool_call_id": tool_call_id,
+                    "message_id": str(getattr(message, "id", "") or ""),
+                },
+            )
+        content_tokens = len(encoder.encode(content))
+        artifact_record["original_tokens"] = content_tokens
+        artifacts.append(artifact_record)
+        tool_summaries.append({
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "args_summary": _tool_args_summary(args),
+            "path": _primary_path_from_args(args),
+            "status": "stubbed",
+            "result_summary": _truncate_inline(content, CONTEXT_STUB_PREVIEW_CHARS),
+            "artifact_ref": artifact_record.get("ref_id", ref_id),
+            "content_hash": artifact_record.get("content_hash", ""),
+            "original_tokens": content_tokens,
+            "original_chars": len(content),
+            "artifact_path": artifact_record.get("artifact_path", ""),
+            "restore_hint": artifact_record.get("restore_hint", restore_hint),
+        })
+
+    stub_payload = {
+        "kind": "context_tool_stub",
+        "message": "旧工具交互已被确定性裁剪。prompt 只保留结构化 stub；如确需原文，请按 restore_hint 恢复。",
+        "original_message_count": len(group),
+        "original_tokens": original_tokens,
+        "tools": tool_summaries,
+    }
+    stub_content = CONTEXT_TOOL_STUB_PREFIX + "\n" + json.dumps(stub_payload, ensure_ascii=False, indent=2)
+    stub = AIMessage(
+        content=stub_content,
+        id=f"context-stub-{uuid.uuid4().hex}",
+        additional_kwargs={"mortyclaw_context_stub": stub_payload},
+    )
+    return stub, {
+        "original_message_count": len(group),
+        "original_tokens": original_tokens,
+        "artifact_count": len(artifacts),
+        "tools": tool_summaries,
+    }
 
 
 def _extract_persisted_preview(content: str) -> str:
@@ -392,6 +658,116 @@ def _trim_messages_to_budget(
     kept = [message for index, message in enumerate(messages) if index in keep_indices]
     discarded = [message for index, message in enumerate(messages) if index not in keep_indices]
     return kept, discarded
+
+
+def compact_context_messages_deterministic(
+    messages: list[BaseMessage],
+    *,
+    thread_id: str = "system_default",
+    turn_id: str = "turn-default",
+    model_name: str = "",
+    persist_artifacts: bool = True,
+    protect_tail_groups: int = 4,
+) -> DeterministicCompactionResult:
+    """Conservatively compact old context without calling an LLM.
+
+    This function keeps protocol legality by replacing entire tool-call groups
+    with plain assistant stubs instead of leaving partial AI/tool chains behind.
+    """
+
+    if not messages:
+        result = DeterministicCompactionResult([], [], [], [], [], {
+            "kept_count": 0,
+            "stubbed_count": 0,
+            "safely_discarded_count": 0,
+            "removed_count": 0,
+            "artifact_count": 0,
+        })
+        setattr(compact_context_messages_deterministic, "_last_stats", result.stats)
+        return result
+
+    groups = _group_messages(list(messages))
+    latest_human_group_index = -1
+    for index in range(len(groups) - 1, -1, -1):
+        if any(isinstance(message, HumanMessage) for message in groups[index]):
+            latest_human_group_index = index
+            break
+
+    protected_indices: set[int] = set()
+    if groups and any(isinstance(message, SystemMessage) for message in groups[0]):
+        protected_indices.add(0)
+    protected_indices.update(range(max(0, len(groups) - max(1, protect_tail_groups)), len(groups)))
+    if latest_human_group_index >= 0:
+        protected_indices.add(latest_human_group_index)
+
+    latest_dedupe_indices: dict[tuple[str, str], int] = {}
+    for index, group in enumerate(groups):
+        key = _tool_group_dedupe_key(group)
+        if key is not None:
+            latest_dedupe_indices[key] = index
+
+    kept_messages: list[BaseMessage] = []
+    removed_messages: list[BaseMessage] = []
+    stub_messages: list[BaseMessage] = []
+    stubbed_groups: list[dict[str, Any]] = []
+    safely_discarded: list[BaseMessage] = []
+    artifact_count = 0
+
+    for index, group in enumerate(groups):
+        if index in protected_indices:
+            kept_messages.extend(group)
+            continue
+
+        dedupe_key = _tool_group_dedupe_key(group)
+        if dedupe_key is not None and latest_dedupe_indices.get(dedupe_key, index) > index:
+            removed_messages.extend(group)
+            safely_discarded.extend(group)
+            continue
+
+        if _group_has_tool_interaction(group):
+            stub, metadata = _build_tool_stub(
+                group=group,
+                thread_id=thread_id,
+                turn_id=turn_id,
+                model_name=model_name,
+                persist_artifacts=persist_artifacts,
+            )
+            kept_messages.append(stub)
+            stub_messages.append(stub)
+            removed_messages.extend(group)
+            stubbed_groups.append(metadata)
+            artifact_count += int(metadata.get("artifact_count", 0) or 0)
+            continue
+
+        if len(group) == 1 and _looks_like_process_only_assistant(group[0]):
+            removed_messages.extend(group)
+            safely_discarded.extend(group)
+            continue
+
+        kept_messages.extend(group)
+
+    sanitized_kept, sanitized_discarded, repaired = _sanitize_tool_pairs(kept_messages)
+    removed_messages.extend(sanitized_discarded)
+    safely_discarded.extend(sanitized_discarded)
+    stats = {
+        "kept_count": len(sanitized_kept),
+        "stubbed_count": len(stub_messages),
+        "stubbed_group_count": len(stubbed_groups),
+        "safely_discarded_count": len(safely_discarded),
+        "removed_count": len(removed_messages),
+        "artifact_count": artifact_count,
+        "tool_pairs_repaired": repaired,
+    }
+    result = DeterministicCompactionResult(
+        kept_messages=sanitized_kept,
+        removed_messages=removed_messages,
+        stub_messages=stub_messages,
+        stubbed_groups=stubbed_groups,
+        safely_discarded=safely_discarded,
+        stats=stats,
+    )
+    setattr(compact_context_messages_deterministic, "_last_stats", stats)
+    return result
 
 
 def trim_context_messages(

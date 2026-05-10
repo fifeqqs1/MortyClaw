@@ -47,6 +47,9 @@ def search_sessions_impl(
     include_tool_results: bool,
     current_thread_id: str,
     get_conversation_repository_fn,
+    summarize: bool = True,
+    summary_timeout_seconds: int = 45,
+    llm_factory=None,
 ) -> str:
     try:
         try:
@@ -54,6 +57,11 @@ def search_sessions_impl(
         except (TypeError, ValueError):
             safe_limit = 3
         safe_limit = max(1, min(safe_limit, 5))
+        try:
+            safe_timeout = int(summary_timeout_seconds)
+        except (TypeError, ValueError):
+            safe_timeout = 45
+        safe_timeout = max(1, min(safe_timeout, 120))
         roles = [role.strip() for role in (role_filter or "").split(",") if role.strip()]
         results = get_conversation_repository_fn().search_sessions(
             query=query or "",
@@ -63,14 +71,27 @@ def search_sessions_impl(
             current_thread_id=current_thread_id,
             include_tool_results=include_tool_results,
         )
+        mode = "recent" if not (query or "").strip() else "search"
+        effective_results = results
+        if mode == "search" and summarize:
+            from ...session_recall import summarize_session_results
+
+            effective_results = summarize_session_results(
+                results,
+                query=query or "",
+                llm_factory=llm_factory,
+                timeout_seconds=safe_timeout,
+                limit=safe_limit,
+            )
         return json.dumps(
             {
                 "success": True,
                 "query": query or "",
-                "mode": "recent" if not (query or "").strip() else "search",
+                "mode": mode,
                 "current_thread_id": current_thread_id,
-                "count": len(results),
-                "results": results,
+                "summarize": bool(summarize) if mode == "search" else False,
+                "count": len(effective_results),
+                "results": effective_results,
             },
             ensure_ascii=False,
         )

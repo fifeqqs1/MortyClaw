@@ -138,8 +138,8 @@ def make_planner_node(
             execution_plan = build_rule_execution_plan_fn(plan_source or state.get("goal", latest_user_query or ""), risk_level)
             plan_source_label = "rule_fallback"
         current_step = execution_plan[0] if execution_plan else None
-        requires_approval = step_requires_approval_fn(current_step) and not state.get("approval_granted", False)
-        approval_reason = build_approval_reason_fn(current_step) if requires_approval else ""
+        requires_approval = False
+        approval_reason = ""
         todos = plan_to_todos_fn(execution_plan, 0) if should_enable_todos_fn("slow", execution_plan) else []
         todo_revision = int(state.get("todo_revision", 0) or 0) + (1 if todos else 0)
         if todos:

@@ -1,6 +1,8 @@
 import unittest
+import json
 import os
 import sys
+import tempfile
 from unittest.mock import patch
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage, ToolMessage
 
@@ -13,6 +15,7 @@ from mortyclaw.core.context.window import (
     _estimate_messages_tokens,
     _resolve_token_encoder,
     classify_context_pressure,
+    compact_context_messages_deterministic,
     estimate_text_tokens,
 )
 
@@ -437,6 +440,145 @@ class TestContextTrimming(unittest.TestCase):
         self.assertEqual(len(repaired_results), 1)
         self.assertEqual(repaired_results[0].tool_call_id, "call-old")
         self.assertGreaterEqual(trim_context_messages._last_stats["tool_pairs_repaired"], 1)
+
+    def test_deterministic_compaction_replaces_old_tool_group_with_artifact_stub(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            with patch("mortyclaw.core.runtime.tool_results.RUNTIME_ARTIFACTS_DIR", workspace):
+                from mortyclaw.core.runtime.tool_results import restore_context_artifact
+
+                messages = [
+                    HumanMessage(content="分析项目", id="user-1"),
+                    AIMessage(
+                        content="",
+                        id="ai-tool",
+                        tool_calls=[{
+                            "id": "call-read",
+                            "name": "read_project_file",
+                            "args": {"filepath": "src/app.py", "start_line": 1, "end_line": 80},
+                        }],
+                    ),
+                    ToolMessage(
+                        content="def app():\n" + ("print('x')\n" * 1000),
+                        tool_call_id="call-read",
+                        name="read_project_file",
+                        id="tool-read",
+                    ),
+                    HumanMessage(content="继续", id="user-2"),
+                    AIMessage(content="最后结论", id="ai-final"),
+                ]
+
+                result = compact_context_messages_deterministic(
+                    messages,
+                    thread_id="ctx-thread",
+                    turn_id="ctx-turn",
+                    model_name="gpt-4o-mini",
+                    protect_tail_groups=1,
+                )
+
+                self.assertEqual(result.stats["stubbed_count"], 1)
+                self.assertEqual(result.stats["artifact_count"], 1)
+                self.assertTrue(any("restore_context_artifact" in str(message.content) for message in result.stub_messages))
+                self.assertFalse(any(isinstance(message, ToolMessage) and message.tool_call_id == "call-read" for message in result.kept_messages))
+                stub_text = str(result.stub_messages[0].content)
+                self.assertIn("content_hash", stub_text)
+                self.assertIn("original_tokens", stub_text)
+                self.assertIn("src/app.py", stub_text)
+                ref_id = result.stubbed_groups[0]["tools"][0]["artifact_ref"]
+                restored = restore_context_artifact(ref_id, preview_chars=200)
+                self.assertIn('"ok": true', restored)
+                self.assertIn("def app", restored)
+
+                missing = restore_context_artifact("not-registered")
+                self.assertIn('"ok": false', missing)
+
+    def test_deterministic_compaction_discards_duplicate_search_group(self):
+        messages = [
+            HumanMessage(content="查配置", id="user-1"),
+            AIMessage(content="", id="ai-search-1", tool_calls=[{"id": "call-search-1", "name": "search_project_code", "args": {"query": "config"}}]),
+            ToolMessage(content="old result", tool_call_id="call-search-1", name="search_project_code", id="tool-search-1"),
+            AIMessage(content="", id="ai-search-2", tool_calls=[{"id": "call-search-2", "name": "search_project_code", "args": {"query": "config"}}]),
+            ToolMessage(content="new result", tool_call_id="call-search-2", name="search_project_code", id="tool-search-2"),
+            HumanMessage(content="继续", id="user-2"),
+        ]
+
+        result = compact_context_messages_deterministic(
+            messages,
+            thread_id="ctx-thread",
+            turn_id="ctx-turn",
+            model_name="gpt-4o-mini",
+            protect_tail_groups=1,
+        )
+
+        removed_ids = {getattr(message, "id", "") for message in result.safely_discarded}
+        self.assertIn("ai-search-1", removed_ids)
+        self.assertIn("tool-search-1", removed_ids)
+
+    def test_deterministic_compaction_keeps_tool_protocol_legal(self):
+        messages = [
+            HumanMessage(content="查入口", id="user-1"),
+            AIMessage(
+                content="",
+                id="ai-read",
+                tool_calls=[{"id": "call-read", "name": "read_project_file", "args": {"filepath": "src/app.py"}}],
+            ),
+            ToolMessage(
+                content="file content\n" + ("x\n" * 400),
+                tool_call_id="call-read",
+                name="read_project_file",
+                id="tool-read",
+            ),
+            HumanMessage(content="继续", id="user-2"),
+        ]
+
+        result = compact_context_messages_deterministic(
+            messages,
+            thread_id="ctx-thread",
+            turn_id="ctx-turn",
+            model_name="gpt-4o-mini",
+            persist_artifacts=False,
+            protect_tail_groups=1,
+        )
+
+        tool_call_ids = {
+            tool_call.get("id")
+            for message in result.kept_messages
+            if isinstance(message, AIMessage)
+            for tool_call in (getattr(message, "tool_calls", []) or [])
+        }
+        result_ids = {
+            getattr(message, "tool_call_id", "")
+            for message in result.kept_messages
+            if isinstance(message, ToolMessage)
+        }
+        self.assertTrue(tool_call_ids.issubset(result_ids))
+        self.assertFalse(any(getattr(message, "id", "") == "ai-read" for message in result.kept_messages))
+        self.assertTrue(any("context_tool_stub" in str(getattr(message, "additional_kwargs", {})) for message in result.kept_messages))
+
+    def test_restore_context_artifact_rejects_manifest_path_outside_root(self):
+        with tempfile.TemporaryDirectory() as workspace, tempfile.NamedTemporaryFile(delete=False) as outside:
+            outside.write(b"secret")
+            outside_path = outside.name
+            try:
+                with patch("mortyclaw.core.runtime.tool_results.RUNTIME_ARTIFACTS_DIR", workspace):
+                    from mortyclaw.core.runtime.tool_results import restore_context_artifact
+
+                    manifest_dir = os.path.join(workspace, "context", "thread", "turn")
+                    os.makedirs(manifest_dir, exist_ok=True)
+                    with open(os.path.join(manifest_dir, "manifest.jsonl"), "w", encoding="utf-8") as handle:
+                        handle.write(json.dumps({
+                            "ref_id": "ctx_outside",
+                            "artifact_path": outside_path,
+                            "content_hash": "",
+                        }, ensure_ascii=False) + "\n")
+
+                    restored = restore_context_artifact("ctx_outside")
+                    self.assertIn('"ok": false', restored)
+                    self.assertIn("outside runtime artifact root", restored)
+            finally:
+                try:
+                    os.remove(outside_path)
+                except OSError:
+                    pass
 
 
 class TestAgentState(unittest.TestCase):

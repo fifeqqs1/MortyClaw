@@ -5,6 +5,9 @@ import threading
 from collections import OrderedDict
 from collections.abc import Callable
 
+from .snapshot import MemorySnapshot
+from ..memory_safety import scan_memory_content
+
 
 SESSION_MEMORY_PROMPT_LIMIT = 5
 LONG_TERM_MEMORY_PROMPT_LIMIT = 4
@@ -417,6 +420,10 @@ def extract_long_term_memory_records(
     if not should_capture:
         return []
 
+    safety = scan_memory_content(normalized_query)
+    if not safety.ok:
+        return []
+
     digest = hashlib.sha1(normalized_query.encode("utf-8")).hexdigest()[:16]
     memory_type = classify_long_term_memory_type(normalized_query)
     subject = classify_long_term_memory_subject(memory_type, normalized_query)
@@ -490,18 +497,29 @@ def build_long_term_memory_prompt(
     user_profile_memory_type: str,
     long_term_memory_prompt_limit: int = LONG_TERM_MEMORY_PROMPT_LIMIT,
     prompt_cache: MemoryPromptCache | None = None,
+    memory_snapshot: MemorySnapshot | None = None,
 ) -> str:
     if not should_recall_long_term_memory(query):
         return ""
 
     store = get_memory_store_fn()
     normalized_query = (query or "").strip()
+    store_cache_namespace = (
+        ("snapshot", memory_snapshot.session_id, hashlib.sha1(memory_snapshot.profile_content.encode("utf-8")).hexdigest())
+        if memory_snapshot is not None
+        else _store_cache_namespace(store)
+    )
+    profile_cache_namespace = (
+        ("snapshot", memory_snapshot.session_id)
+        if memory_snapshot is not None
+        else _profile_file_mtime(memory_dir)
+    )
     cache_key = (
         "long_term_prompt",
-        _store_cache_namespace(store),
+        store_cache_namespace,
         normalized_query[:300],
         memory_dir,
-        _profile_file_mtime(memory_dir),
+        profile_cache_namespace,
         default_long_term_scope,
         user_profile_memory_type,
         long_term_memory_prompt_limit,
@@ -509,11 +527,15 @@ def build_long_term_memory_prompt(
 
     def build_prompt() -> str:
         sections = []
-        profile_content = load_long_term_profile_content(
-            get_memory_store_fn=lambda: store,
-            memory_dir=memory_dir,
-            default_long_term_scope=default_long_term_scope,
-            user_profile_memory_type=user_profile_memory_type,
+        profile_content = (
+            memory_snapshot.profile_content.strip()
+            if memory_snapshot and memory_snapshot.profile_content.strip()
+            else load_long_term_profile_content(
+                get_memory_store_fn=lambda: store,
+                memory_dir=memory_dir,
+                default_long_term_scope=default_long_term_scope,
+                user_profile_memory_type=user_profile_memory_type,
+            )
         )
         if profile_content and profile_content != "暂无记录":
             sections.append(
