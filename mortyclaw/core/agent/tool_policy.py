@@ -6,6 +6,7 @@ from ..planning import (
     step_matches_shell_action,
     step_matches_test_action,
 )
+from ..tools.meta import TOOL_META_ATTR, ToolMeta, get_registered_tool_meta, get_tool_meta, is_fast_route_safe
 
 
 REQUEST_TOOL_SCHEMA_TOOL_NAME = "request_tool_schema"
@@ -129,6 +130,55 @@ def _tool_map(tools: list[BaseTool]) -> dict[str, BaseTool]:
     }
 
 
+def _fallback_tool_meta(tool: BaseTool) -> ToolMeta:
+    name = str(getattr(tool, "name", "") or "").strip()
+    if getattr(tool, TOOL_META_ATTR, None) is not None:
+        return get_tool_meta(tool)
+    registered_meta = get_registered_tool_meta(name)
+    if registered_meta is not None:
+        return registered_meta
+    if name in SLOW_DESTRUCTIVE_TOOL_NAMES:
+        return ToolMeta.build(
+            name=name,
+            capabilities={"file_write"},
+            risk_level="high",
+            allowed_routes={"slow"},
+            requires_approval=True,
+        )
+    if name in FAST_PATH_PROJECT_ANALYSIS_TOOL_NAMES or name in GENERAL_UTILITY_TOOL_NAMES or name in RESEARCH_TOOL_NAMES:
+        return ToolMeta.build(
+            name=name,
+            capabilities={"legacy_fast_allow"},
+            risk_level="low",
+            allowed_routes={"fast", "slow"},
+        )
+    return ToolMeta.build(name=name or "unknown")
+
+
+def _tool_allowed_on_fast_route(tool: BaseTool) -> bool:
+    name = str(getattr(tool, "name", "") or "").strip()
+    return name not in FAST_PATH_EXCLUDED_TOOL_NAMES and is_fast_route_safe(_fallback_tool_meta(tool))
+
+
+def _tool_blocked_by_plan_mode(tool: BaseTool) -> bool:
+    meta = _fallback_tool_meta(tool)
+    return meta.requires_approval or meta.risk_level == "high"
+
+
+def _tool_requires_approval_by_name(tool_name: str, tool_by_name: dict[str, BaseTool] | None = None) -> bool:
+    name = str(tool_name or "").strip()
+    if not name:
+        return False
+    tool = (tool_by_name or {}).get(name)
+    if tool is not None:
+        meta = _fallback_tool_meta(tool)
+        return meta.requires_approval or meta.risk_level == "high"
+    registered_meta = get_registered_tool_meta(name)
+    if registered_meta is not None:
+        return registered_meta.requires_approval or registered_meta.risk_level == "high"
+    return name in SLOW_DESTRUCTIVE_TOOL_NAMES
+
+
 def _select_available_tools_by_names(tools: list[BaseTool], names: set[str]) -> list[BaseTool]:
     tool_by_name = _tool_map(tools)
     return [
@@ -202,7 +252,7 @@ def select_tools_for_fast_route(
 ) -> list[BaseTool]:
     baseline_tools = [
         tool for tool in all_tools
-        if getattr(tool, "name", "") not in FAST_PATH_EXCLUDED_TOOL_NAMES
+        if _tool_allowed_on_fast_route(tool)
     ]
 
     if _looks_like_fast_project_analysis(state, latest_user_query=latest_user_query):
@@ -277,7 +327,11 @@ def apply_permission_mode_to_tools(
 ) -> list[BaseTool]:
     normalized_mode = str(permission_mode or "").strip().lower()
     if normalized_mode == "plan":
-        blocked = PLAN_MODE_BLOCKED_TOOL_NAMES
+        filtered = [
+            tool for tool in tools
+            if not _tool_blocked_by_plan_mode(tool)
+        ]
+        return filtered or tools
     elif normalized_mode == "auto":
         blocked = AUTO_MODE_BLOCKED_TOOL_NAMES
     else:
@@ -290,11 +344,16 @@ def apply_permission_mode_to_tools(
 
 
 def destructive_tool_calls(tool_calls: list[dict] | None) -> list[dict]:
+    try:
+        from ..tools.builtins.registry import BUILTIN_TOOLS
+        tool_by_name = _tool_map(BUILTIN_TOOLS)
+    except Exception:
+        tool_by_name = {}
     return [
         dict(tool_call)
         for tool_call in (tool_calls or [])
         if isinstance(tool_call, dict)
-        and str(tool_call.get("name") or "").strip() in SLOW_DESTRUCTIVE_TOOL_NAMES
+        and _tool_requires_approval_by_name(str(tool_call.get("name") or "").strip(), tool_by_name)
     ]
 
 

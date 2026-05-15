@@ -34,6 +34,135 @@ from . import (
     write_office_file,
     write_project_file,
 )
+from ..meta import ToolMeta, attach_tool_meta
+
+
+def _meta(
+    name: str,
+    capabilities: set[str],
+    *,
+    risk_level: str = "low",
+    allowed_routes: set[str] | None = None,
+    requires_approval: bool = False,
+) -> ToolMeta:
+    return ToolMeta.build(
+        name=name,
+        capabilities=capabilities,
+        risk_level=risk_level,
+        allowed_routes=allowed_routes or {"fast", "slow"},
+        requires_approval=requires_approval,
+    )
+
+
+BUILTIN_TOOL_META = {
+    "get_current_time": _meta("get_current_time", {"system_read"}),
+    "calculator": _meta("calculator", {"compute"}),
+    "request_tool_schema": _meta("request_tool_schema", {"tool_schema_read"}),
+    "restore_context_artifact": _meta("restore_context_artifact", {"context_read"}),
+    "summarize_content": _meta("summarize_content", {"web_read"}),
+    "tavily_web_search": _meta("tavily_web_search", {"web_read"}),
+    "arxiv_rag_ask": _meta("arxiv_rag_ask", {"web_read"}),
+    "save_user_profile": _meta(
+        "save_user_profile",
+        {"memory_write"},
+        risk_level="medium",
+        allowed_routes={"slow"},
+        requires_approval=False,
+    ),
+    "list_office_files": _meta("list_office_files", {"office_read"}),
+    "read_office_file": _meta("read_office_file", {"office_read"}),
+    "write_office_file": _meta(
+        "write_office_file",
+        {"office_write", "file_write"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "execute_office_shell": _meta(
+        "execute_office_shell",
+        {"office_write", "shell_exec"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "read_project_file": _meta("read_project_file", {"project_read", "file_read"}),
+    "search_project_code": _meta("search_project_code", {"project_read"}),
+    "edit_project_file": _meta(
+        "edit_project_file",
+        {"project_write", "file_write"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "write_project_file": _meta(
+        "write_project_file",
+        {"project_write", "file_write"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "apply_project_patch": _meta(
+        "apply_project_patch",
+        {"project_write", "file_write"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "show_git_diff": _meta("show_git_diff", {"project_read"}),
+    "run_project_tests": _meta(
+        "run_project_tests",
+        {"project_read", "shell_exec"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "run_project_command": _meta(
+        "run_project_command",
+        {"project_write", "shell_exec"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "execute_tool_program": _meta(
+        "execute_tool_program",
+        {"program_exec"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "delegate_subagent": _meta(
+        "delegate_subagent",
+        {"subagent_write"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "delegate_subagents": _meta(
+        "delegate_subagents",
+        {"subagent_write"},
+        risk_level="high",
+        allowed_routes={"slow"},
+        requires_approval=True,
+    ),
+    "wait_subagents": _meta("wait_subagents", {"subagent_read"}, allowed_routes={"slow"}),
+    "list_subagents": _meta("list_subagents", {"subagent_read"}, allowed_routes={"slow"}),
+    "cancel_subagent": _meta("cancel_subagent", {"subagent_write"}, risk_level="medium", allowed_routes={"slow"}),
+    "cancel_subagents": _meta("cancel_subagents", {"subagent_write"}, risk_level="medium", allowed_routes={"slow"}),
+    "get_system_model_info": _meta("get_system_model_info", {"system_read"}),
+    "schedule_task": _meta("schedule_task", {"task_write"}, risk_level="medium", allowed_routes={"slow"}),
+    "list_scheduled_tasks": _meta("list_scheduled_tasks", {"task_read"}),
+    "delete_scheduled_task": _meta("delete_scheduled_task", {"task_write"}, risk_level="medium", allowed_routes={"slow"}),
+    "modify_scheduled_task": _meta("modify_scheduled_task", {"task_write"}, risk_level="medium", allowed_routes={"slow"}),
+    "search_sessions": _meta("search_sessions", {"session_read"}),
+    "update_todo_list": _meta("update_todo_list", {"todo_write"}, risk_level="medium", allowed_routes={"slow"}),
+}
+
+
+def _with_builtin_meta(tool):
+    meta = BUILTIN_TOOL_META.get(str(getattr(tool, "name", "") or ""))
+    if meta is None:
+        return tool
+    return attach_tool_meta(tool, meta)
 
 
 BUILTIN_TOOLS = [
@@ -72,3 +201,5 @@ BUILTIN_TOOLS = [
     search_sessions,
     update_todo_list,
 ]
+
+BUILTIN_TOOLS = [_with_builtin_meta(tool) for tool in BUILTIN_TOOLS]

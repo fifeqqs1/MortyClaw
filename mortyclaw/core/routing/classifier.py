@@ -55,33 +55,30 @@ def classify_route_with_llm(query: str, llm) -> dict | None:
 2. slow + autonomous
 适合：
 - 目标明确
-- 范围较小或中等
 - 可以边读文件边执行
 - 可以边修改边验证
 - 用户已经给出明确项目路径和明确要求
 - 即使有多个步骤，但步骤之间线性清楚
 - 即使需要写文件、运行命令、执行测试，只要任务目标明确、范围收敛、执行路径清楚，仍优先 autonomous
+- 即使涉及多个文件或多个模块，只要不是全项目级架构重构，也应优先选择 autonomous
 
 默认优先选择 autonomous。
 
 3. slow + structured
 适合：
 - 用户目标模糊，需要先拆解
-- 任务范围很大
-- 涉及整个项目架构分析
+- 任务范围非常大，涉及全项目架构分析、全局重构、模块体系重新设计
 - 多模块、多文件、大重构
-- 多个并列交付物且相互依赖
 - 需要先形成结构化计划再执行
 - 代理必须先决定“要做什么”，而不是已经清楚“怎么开始做”
 
-只有任务确实复杂、范围大、目标不清晰，才选择 structured。
+只有任务确实十分复杂、范围大、目标不清晰，才选择 structured。
 
 只输出一个 JSON 对象，不要输出 Markdown，不要补充解释：
 {{
   "route": "fast" 或 "slow",
   "slow_execution_mode": "autonomous" 或 "structured"，如果 route=fast 则填空字符串 "",
-  "reason": "一句简短原因",
-  "confidence": 0 到 1 之间的小数
+  "reason": "一句简短原因"
 }}
 
 用户请求：
@@ -118,16 +115,9 @@ def classify_route_with_llm(query: str, llm) -> dict | None:
     elif slow_execution_mode not in {"autonomous", "structured"}:
         slow_execution_mode = ""
 
-    try:
-        confidence = float(payload.get("confidence", 0.0))
-    except (TypeError, ValueError):
-        confidence = 0.0
-
-    confidence = max(0.0, min(1.0, confidence))
     reason = str(payload.get("reason", "")).strip()
     return {
         "route": route,
         "slow_execution_mode": slow_execution_mode,
         "reason": reason,
-        "confidence": confidence,
     }

@@ -489,14 +489,6 @@ def build_route_decision(query: str | None, llm_classifier_fn=None) -> dict:
             "route_confidence": 1.0,
         }
 
-    lowered_query = normalized_query.lower()
-    is_multi_step = contains_query_hint(normalized_query, lowered_query, SLOW_PATH_MULTI_STEP_HINTS)
-    is_high_risk = contains_query_hint(normalized_query, lowered_query, SLOW_PATH_HIGH_RISK_HINTS)
-    is_simple = _looks_like_simple_question(normalized_query, lowered_query)
-    is_read_only_analysis = _looks_like_read_only_analysis_request(normalized_query, lowered_query)
-    is_mixed_research = _looks_like_mixed_research_task(normalized_query)
-    is_capability_meta_question = _looks_like_capability_meta_question(normalized_query, lowered_query)
-
     if llm_classifier_fn is not None:
         try:
             llm_decision = llm_classifier_fn(normalized_query)
@@ -505,65 +497,41 @@ def build_route_decision(query: str | None, llm_classifier_fn=None) -> dict:
         if isinstance(llm_decision, dict):
             llm_route = str(llm_decision.get("route", "")).strip().lower()
             llm_slow_execution_mode = str(llm_decision.get("slow_execution_mode", "") or "").strip().lower()
-            try:
-                llm_confidence = float(llm_decision.get("confidence", 0.0))
-            except (TypeError, ValueError):
-                llm_confidence = 0.0
             llm_reason = str(llm_decision.get("reason", "") or "").strip()
-            if llm_route in {"fast", "slow"} and llm_confidence >= 0.5:
-                if is_high_risk and llm_route != "slow":
-                    llm_route = "slow"
-                if llm_route == "slow" and llm_slow_execution_mode not in {"autonomous", "structured"}:
-                    llm_slow_execution_mode = (
-                        "structured"
-                        if is_mixed_research or _looks_like_clearly_complex_request(normalized_query, lowered_query)
-                        else "autonomous"
-                    )
-                if llm_route == "fast":
-                    if is_capability_meta_question:
-                        complexity = "meta_capability"
-                        route_reason = llm_reason or "capability/boundary question can be answered directly"
-                    elif is_read_only_analysis:
-                        complexity = "read_only_analysis"
-                        route_reason = llm_reason or "read-only repository analysis can be answered directly"
-                    else:
-                        complexity = "simple" if is_simple else "direct_answer"
-                        route_reason = llm_reason or "llm judged the request can be answered directly"
-                    return {
-                        "route": "fast",
-                        "goal": normalized_query,
-                        "complexity": complexity,
-                        "risk_level": "low",
-                        "planner_required": False,
-                        "route_locked": False,
-                        "slow_execution_mode": "",
-                        "route_source": "llm_classifier_fast",
-                        "route_reason": route_reason,
-                        "route_confidence": llm_confidence,
-                    }
-
-                if is_mixed_research:
-                    complexity = "mixed_research"
-                elif is_high_risk:
-                    complexity = "multi_step_high_risk" if is_multi_step else "high_risk"
-                elif llm_slow_execution_mode == "structured":
-                    complexity = "complex" if _looks_like_clearly_complex_request(normalized_query, lowered_query) else "uncertain"
-                elif is_multi_step:
-                    complexity = "multi_step"
-                else:
-                    complexity = "uncertain"
+            if llm_route == "fast":
+                return {
+                    "route": "fast",
+                    "goal": normalized_query,
+                    "complexity": "llm_direct",
+                    "risk_level": "low",
+                    "planner_required": False,
+                    "route_locked": False,
+                    "slow_execution_mode": "",
+                    "route_source": "llm_classifier_fast",
+                    "route_reason": llm_reason or "llm judged the request can be answered directly",
+                    "route_confidence": 1.0,
+                }
+            if llm_route == "slow" and llm_slow_execution_mode in {"autonomous", "structured"}:
                 return {
                     "route": "slow",
                     "goal": normalized_query,
-                    "complexity": complexity,
-                    "risk_level": "high" if is_high_risk else "medium",
+                    "complexity": "llm_routed",
+                    "risk_level": "medium",
                     "planner_required": llm_slow_execution_mode == "structured",
-                    "route_locked": bool(is_high_risk),
+                    "route_locked": False,
                     "slow_execution_mode": llm_slow_execution_mode,
                     "route_source": f"llm_classifier_slow_{llm_slow_execution_mode}",
                     "route_reason": llm_reason or "llm judged the request requires slow-path execution",
-                    "route_confidence": llm_confidence,
+                    "route_confidence": 1.0,
                 }
+
+    lowered_query = normalized_query.lower()
+    is_multi_step = contains_query_hint(normalized_query, lowered_query, SLOW_PATH_MULTI_STEP_HINTS)
+    is_high_risk = contains_query_hint(normalized_query, lowered_query, SLOW_PATH_HIGH_RISK_HINTS)
+    is_simple = _looks_like_simple_question(normalized_query, lowered_query)
+    is_read_only_analysis = _looks_like_read_only_analysis_request(normalized_query, lowered_query)
+    is_mixed_research = _looks_like_mixed_research_task(normalized_query)
+    is_capability_meta_question = _looks_like_capability_meta_question(normalized_query, lowered_query)
 
     if should_direct_route_to_arxiv_rag(normalized_query):
         return {

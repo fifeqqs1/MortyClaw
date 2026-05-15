@@ -283,7 +283,6 @@ class TestAgent(unittest.TestCase):
                         "route": "fast",
                         "slow_execution_mode": "",
                         "reason": "需要直接执行单个工具",
-                        "confidence": 0.92,
                     }, ensure_ascii=False))
                 self.call_count += 1
                 self.agent_call_count += 1
@@ -918,11 +917,11 @@ class TestAgent(unittest.TestCase):
         """测试明显简单的问题会优先使用高置信 LLM classifier 结果"""
         from mortyclaw.core.agent import _build_route_decision
 
-        classifier = Mock(return_value={"route": "fast", "reason": "可以直接回答", "confidence": 0.99})
+        classifier = Mock(return_value={"route": "fast", "reason": "可以直接回答"})
         decision = _build_route_decision("现在几点了？", llm_classifier_fn=classifier)
         classifier.assert_called_once()
         self.assertEqual(decision["route"], "fast")
-        self.assertEqual(decision["complexity"], "simple")
+        self.assertEqual(decision["complexity"], "llm_direct")
         self.assertEqual(decision["route_source"], "llm_classifier_fast")
 
     def test_build_route_decision_routes_ambiguous_query_via_llm_classifier(self):
@@ -933,12 +932,11 @@ class TestAgent(unittest.TestCase):
             "route": "slow",
             "slow_execution_mode": "structured",
             "reason": "需要显式计划来推进需求",
-            "confidence": 0.93,
         })
         decision = _build_route_decision("这个需求后续该怎么推进比较合适", llm_classifier_fn=classifier)
         classifier.assert_called_once()
         self.assertEqual(decision["route"], "slow")
-        self.assertEqual(decision["complexity"], "uncertain")
+        self.assertEqual(decision["complexity"], "llm_routed")
         self.assertEqual(decision["risk_level"], "medium")
         self.assertTrue(decision["planner_required"])
         self.assertEqual(decision["slow_execution_mode"], "structured")
@@ -951,12 +949,11 @@ class TestAgent(unittest.TestCase):
         classifier = Mock(return_value={
             "route": "fast",
             "reason": "这是能力确认问题，可以直接回答",
-            "confidence": 0.96,
         })
         decision = _build_route_decision("你可以进行代码修改和检查吗？", llm_classifier_fn=classifier)
         classifier.assert_called_once()
         self.assertEqual(decision["route"], "fast")
-        self.assertEqual(decision["complexity"], "meta_capability")
+        self.assertEqual(decision["complexity"], "llm_direct")
         self.assertEqual(decision["route_source"], "llm_classifier_fast")
 
     def test_build_route_decision_falls_back_to_rule_for_capability_question_when_classifier_unavailable(self):
@@ -970,20 +967,22 @@ class TestAgent(unittest.TestCase):
         self.assertEqual(decision["complexity"], "meta_capability")
         self.assertEqual(decision["route_source"], "rule_meta_capability")
 
-    def test_build_route_decision_falls_back_to_rules_when_classifier_confidence_is_low(self):
-        """测试 LLM classifier 低置信时回退规则判断"""
+    def test_build_route_decision_uses_valid_classifier_without_confidence(self):
+        """测试 LLM classifier 只要返回合法路由就直接采用"""
         from mortyclaw.core.agent import _build_route_decision
 
         classifier = Mock(return_value={
-            "route": "fast",
+            "route": "slow",
+            "slow_execution_mode": "autonomous",
             "reason": "我不太确定",
-            "confidence": 0.31,
         })
         decision = _build_route_decision("帮我review这个仓库", llm_classifier_fn=classifier)
         classifier.assert_called_once()
-        self.assertEqual(decision["route"], "fast")
-        self.assertEqual(decision["complexity"], "read_only_analysis")
-        self.assertEqual(decision["route_source"], "rule_read_only_analysis")
+        self.assertEqual(decision["route"], "slow")
+        self.assertEqual(decision["complexity"], "llm_routed")
+        self.assertFalse(decision["planner_required"])
+        self.assertEqual(decision["slow_execution_mode"], "autonomous")
+        self.assertEqual(decision["route_source"], "llm_classifier_slow_autonomous")
 
     def test_error_classifier_handles_common_failure_kinds(self):
         """测试统一错误分类器能识别常见 provider/tool/context 异常"""

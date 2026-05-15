@@ -7,6 +7,8 @@ from langchain_core.messages import HumanMessage, SystemMessage
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from mortyclaw.core.agent.tool_policy import (
+    apply_permission_mode_to_tools,
+    destructive_tool_calls,
     route_eager_tool_names,
     select_tools_for_autonomous_slow,
     select_tools_for_fast_route,
@@ -17,6 +19,7 @@ from mortyclaw.core.planning import select_tools_for_current_step
 from mortyclaw.core.prompt_builder import build_react_prompt_bundle
 from mortyclaw.core.prompts.provider_cache import apply_provider_prompt_cache
 from mortyclaw.core.tools.base import tool
+from mortyclaw.core.tools.meta import ToolMeta, attach_tool_meta
 
 
 class TestPromptLayers(unittest.TestCase):
@@ -187,6 +190,77 @@ class TestPromptLayers(unittest.TestCase):
         research = select_tools_for_fast_route({}, tools, latest_user_query="搜索今天的最新新闻")
         self.assertNotIn("tavily_web_search", {tool.name for tool in baseline})
         self.assertIn("tavily_web_search", {tool.name for tool in research})
+
+    def test_fast_route_requires_low_risk_tool_metadata_for_unknown_tools(self):
+        @tool
+        def delete_project_file(filepath: str = "") -> str:
+            """delete"""
+            return ""
+
+        @tool
+        def inspect_project_symbols(query: str = "") -> str:
+            """inspect"""
+            return ""
+
+        attach_tool_meta(
+            inspect_project_symbols,
+            ToolMeta.build(
+                name="inspect_project_symbols",
+                capabilities={"project_read"},
+                risk_level="low",
+                allowed_routes={"fast", "slow"},
+            ),
+        )
+
+        selected = select_tools_for_fast_route(
+            {"complexity": "read_only_analysis", "current_project_path": "/tmp/demo"},
+            [delete_project_file, inspect_project_symbols],
+            latest_user_query="分析当前项目结构",
+        )
+        selected_names = {item.name for item in selected}
+        self.assertIn("inspect_project_symbols", selected_names)
+        self.assertNotIn("delete_project_file", selected_names)
+
+    def test_permission_and_approval_use_tool_metadata(self):
+        @tool
+        def inspect_project_symbols(query: str = "") -> str:
+            """inspect"""
+            return ""
+
+        @tool
+        def delete_project_file(filepath: str = "") -> str:
+            """delete"""
+            return ""
+
+        attach_tool_meta(
+            inspect_project_symbols,
+            ToolMeta.build(
+                name="inspect_project_symbols",
+                capabilities={"project_read"},
+                risk_level="low",
+                allowed_routes={"fast", "slow"},
+            ),
+        )
+        attach_tool_meta(
+            delete_project_file,
+            ToolMeta.build(
+                name="delete_project_file",
+                capabilities={"project_write", "file_delete"},
+                risk_level="high",
+                allowed_routes={"slow"},
+                requires_approval=True,
+            ),
+        )
+
+        filtered = apply_permission_mode_to_tools(
+            [inspect_project_symbols, delete_project_file],
+            permission_mode="plan",
+        )
+        self.assertEqual(["inspect_project_symbols"], [item.name for item in filtered])
+        self.assertIn(
+            {"name": "delete_project_file", "args": {}},
+            destructive_tool_calls([{"name": "delete_project_file", "args": {}}]),
+        )
 
     def test_autonomous_project_write_eager_bundle_includes_coding_workbench(self):
         eager = route_eager_tool_names(
