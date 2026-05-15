@@ -30,9 +30,14 @@ workspace/state.sqlite3
 workspace/tasks.json
 workspace/runtime/
 workspace/
+!workspace/
+workspace/*
+!workspace/office/
+workspace/office/*
+!workspace/office/skills/
+!workspace/office/skills/**
 
 workspace/memory/*.md
-workspace/office
 .vscode/
 
 *.egg-info/
