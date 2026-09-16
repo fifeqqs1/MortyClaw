@@ -30,7 +30,7 @@ from ..prompts.provider_cache import apply_provider_prompt_cache
 from ..runtime.todos import hydrate_todos_from_state_or_session
 from ..runtime_context import set_active_tool_scope_names
 from .recovery import _extract_classified_error
-from .tool_policy import REQUEST_TOOL_SCHEMA_TOOL_NAME
+from .tool_policy import REQUEST_TOOL_SCHEMA_TOOL_NAME, retain_safe_requested_deferred_tools
 
 
 CONTEXT_TRIM_KEEP_TOKENS = 220000
@@ -652,6 +652,18 @@ def run_react_agent_node(
         effective_user_query = state["goal"]
 
     requested_deferred_names = _extract_requested_deferred_tool_names(raw_messages)
+    selected_route_tools = retain_safe_requested_deferred_tools(
+        selected_route_tools,
+        all_tools,
+        requested_tool_names=requested_deferred_names,
+        allow_approved_feishu_writes=(
+            active_route == "slow" and permission_mode != "plan"
+        ),
+    )
+    allowed_tool_names = {
+        getattr(tool, "name", "")
+        for tool in selected_route_tools
+    }
     unauthorized_requested_names = sorted(name for name in requested_deferred_names if name not in allowed_tool_names)
     if unauthorized_requested_names:
         deps.audit_logger_instance.log_event(
@@ -1255,7 +1267,6 @@ def run_react_agent_node(
     approval_staged = False
     if (
         active_route == "slow"
-        and slow_execution_mode == "autonomous"
         and response.tool_calls
         and permission_mode not in {"plan", "auto"}
         and not working_state.get("approval_granted", False)
@@ -1278,7 +1289,7 @@ def run_react_agent_node(
                 thread_id=thread_id,
                 event="system_action",
                 content=(
-                    "slow autonomous agent staged destructive tool call batch for approval: "
+                    "slow agent staged destructive tool call batch for approval: "
                     f"{state_updates['approval_reason']}"
                 ),
             )

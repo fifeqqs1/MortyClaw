@@ -69,6 +69,7 @@ def is_fast_route_safe(meta: ToolMeta) -> bool:
         "task_write",
         "memory_write",
         "subagent_write",
+        "external_write",
     }
     return (
         meta.risk_level == "low"

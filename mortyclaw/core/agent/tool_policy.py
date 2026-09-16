@@ -122,6 +122,32 @@ BASE_EAGER_TOOL_NAMES = {
 }
 
 
+def _is_feishu_tool(tool: BaseTool) -> bool:
+    return str(getattr(tool, "name", "") or "").startswith("feishu_")
+
+
+def _query_needs_feishu(query: str) -> bool:
+    lowered = str(query or "").lower()
+    return any(marker in lowered for marker in ("飞书", "feishu", "lark"))
+
+
+def _append_feishu_tools(
+    selected: list[BaseTool],
+    all_tools: list[BaseTool],
+    *,
+    query: str,
+) -> list[BaseTool]:
+    if not _query_needs_feishu(query):
+        return selected
+    selected_names = {str(getattr(tool, "name", "") or "") for tool in selected}
+    return selected + [
+        tool
+        for tool in all_tools
+        if _is_feishu_tool(tool)
+        and str(getattr(tool, "name", "") or "") not in selected_names
+    ]
+
+
 def _tool_map(tools: list[BaseTool]) -> dict[str, BaseTool]:
     return {
         str(getattr(tool, "name", "") or ""): tool
@@ -257,12 +283,14 @@ def select_tools_for_fast_route(
 
     if _looks_like_fast_project_analysis(state, latest_user_query=latest_user_query):
         allowed_names = PROJECT_FAST_UTILITY_TOOL_NAMES | FAST_PATH_PROJECT_ANALYSIS_TOOL_NAMES
-        return _select_tools_by_names(baseline_tools, allowed_names)
+        selected = _select_tools_by_names(baseline_tools, allowed_names)
+        return _append_feishu_tools(selected, baseline_tools, query=latest_user_query)
 
     allowed_names = set(GENERAL_UTILITY_TOOL_NAMES)
     if _query_needs_research(latest_user_query):
         allowed_names |= RESEARCH_TOOL_NAMES
-    return _select_tools_by_names(baseline_tools, allowed_names)
+    selected = _select_tools_by_names(baseline_tools, allowed_names)
+    return _append_feishu_tools(selected, baseline_tools, query=latest_user_query)
 
 
 def select_tools_for_structured_slow(
@@ -282,7 +310,9 @@ def select_tools_for_structured_slow(
     if current_project_path:
         allowed_names.discard("write_office_file")
         allowed_names.discard("execute_office_shell")
-    return _select_tools_by_names(all_tools, allowed_names)
+    selected = _select_tools_by_names(all_tools, allowed_names)
+    task_text = str(state.get("goal", "") or latest_user_query or "")
+    return _append_feishu_tools(selected, all_tools, query=task_text)
 
 
 def select_tools_for_autonomous_slow(
@@ -312,12 +342,14 @@ def select_tools_for_autonomous_slow(
             allowed_tool_names |= RESEARCH_TOOL_NAMES
         allowed_tool_names.discard("write_office_file")
         allowed_tool_names.discard("execute_office_shell")
-        return _select_tools_by_names(all_tools, allowed_tool_names)
+        selected = _select_tools_by_names(all_tools, allowed_tool_names)
+        return _append_feishu_tools(selected, all_tools, query=task_text)
 
     allowed_tool_names = set(GENERAL_UTILITY_TOOL_NAMES) | OFFICE_TOOL_NAMES
     if _query_needs_research(task_text):
         allowed_tool_names |= RESEARCH_TOOL_NAMES
-    return _select_tools_by_names(all_tools, allowed_tool_names)
+    selected = _select_tools_by_names(all_tools, allowed_tool_names)
+    return _append_feishu_tools(selected, all_tools, query=task_text)
 
 
 def apply_permission_mode_to_tools(
@@ -341,6 +373,44 @@ def apply_permission_mode_to_tools(
         if getattr(tool, "name", "") not in blocked
     ]
     return filtered or tools
+
+
+def retain_safe_requested_deferred_tools(
+    selected_tools: list[BaseTool],
+    all_tools: list[BaseTool],
+    *,
+    requested_tool_names: set[str] | None = None,
+    allow_approved_feishu_writes: bool = False,
+) -> list[BaseTool]:
+    """Keep safe deferred tools available after request_tool_schema runs.
+
+    The latest message is the schema-request ToolMessage at that point, so
+    query-based routing can no longer see the user's original Feishu intent.
+    Only tools already classified as fast-route safe are restored here.
+    """
+    selected = list(selected_tools)
+    selected_names = {
+        str(getattr(tool, "name", "") or "")
+        for tool in selected
+    }
+    all_by_name = _tool_map(all_tools)
+    for name in sorted(requested_tool_names or set()):
+        tool = all_by_name.get(name)
+        if tool is None or name in selected_names:
+            continue
+        meta = _fallback_tool_meta(tool)
+        is_safe_read = _tool_allowed_on_fast_route(tool)
+        is_approved_feishu_write = (
+            allow_approved_feishu_writes
+            and _is_feishu_tool(tool)
+            and meta.requires_approval
+            and "slow" in meta.allowed_routes
+        )
+        if not is_safe_read and not is_approved_feishu_write:
+            continue
+        selected.append(tool)
+        selected_names.add(name)
+    return selected
 
 
 def destructive_tool_calls(tool_calls: list[dict] | None) -> list[dict]:

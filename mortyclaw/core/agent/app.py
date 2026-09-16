@@ -57,7 +57,8 @@ def create_agent_app(
 
     if tools is None:
         dynamic_tools = agent_namespace["load_dynamic_skills"]()
-        actual_tools = agent_namespace["BUILTIN_TOOLS"] + dynamic_tools
+        mcp_tools = agent_namespace["load_feishu_mcp_tools"](strict=False)
+        actual_tools = agent_namespace["BUILTIN_TOOLS"] + dynamic_tools + mcp_tools
     else:
         actual_tools = tools
 

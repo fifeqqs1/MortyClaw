@@ -3,6 +3,7 @@ from langchain_core.tools import BaseTool
 
 from ..error_policy import classify_error, serialize_classified_error
 from ..logger import audit_logger
+from ..tools.meta import get_tool_meta
 from .rules import (
     infer_step_intent,
     looks_like_file_write_request,
@@ -167,6 +168,15 @@ def select_tools_for_current_step(
 
         if tool_name == "update_todo_list":
             allowed_tools.append(tool)
+            continue
+
+        if str(tool_name).startswith("feishu_"):
+            meta = get_tool_meta(tool)
+            if step_intent in {"analyze", "read", "summarize", "report"}:
+                if meta.risk_level == "low" and not meta.requires_approval:
+                    allowed_tools.append(tool)
+            else:
+                allowed_tools.append(tool)
             continue
 
         if step_intent == "paper_research":

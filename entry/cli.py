@@ -330,10 +330,16 @@ def config_wizard():
     set_key(ENV_PATH, "DEFAULT_PROVIDER", provider)
     set_key(ENV_PATH, "DEFAULT_MODEL", model_name)
 
+    local_windows_launcher = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "mortyclaw.exe")
+    launch_command = (
+        r".\.venv\Scripts\mortyclaw.exe run"
+        if os.name == "nt" and os.path.exists(local_windows_launcher)
+        else "mortyclaw run"
+    )
     console.print(Panel(
         f"配置已保存至 [#8d52ff]{ENV_PATH}[/#8d52ff]\n"
         f"当前默认提供商: [#8d52ff]{provider}[/#8d52ff] | 模型: [#8d52ff]{model_name}[/#8d52ff]\n\n"
-        f"👉 输入 [bold #00ffff]mortyclaw run[/bold #00ffff] 即可启动系统！",
+        f"👉 输入 [bold #00ffff]{launch_command}[/bold #00ffff] 即可启动系统！",
         border_style="#00ffff"
     ))
 
@@ -393,6 +399,178 @@ def run_agent(
 
     import entry.main as mortyclaw_main
     mortyclaw_main.main(thread_id=resolved_thread_id)
+
+
+@app.command("feishu-config")
+def configure_feishu(
+    identity: str = typer.Option(
+        "app",
+        "--identity",
+        help="鉴权身份：app（应用身份）或 user（用户身份）",
+    ),
+    tools: str = typer.Option(
+        "preset.light",
+        "--tools",
+        help="飞书 MCP 工具预设或逗号分隔的工具名",
+    ),
+    domain: str = typer.Option(
+        "https://open.feishu.cn",
+        "--domain",
+        help="飞书开放平台域名；Lark 国际版使用 https://open.larksuite.com",
+    ),
+):
+    """配置并验证飞书官方 MCP。"""
+    from mortyclaw.core.integrations import (
+        FeishuMCPSettings,
+        feishu_oauth_redirect_urls,
+        load_feishu_mcp_tools,
+        run_feishu_oauth_login,
+    )
+
+    normalized_identity = identity.strip().lower()
+    if normalized_identity not in {"app", "user"}:
+        console.print("[bold red]--identity 只支持 app 或 user。[/bold red]")
+        raise typer.Exit(code=2)
+
+    load_dotenv(ENV_PATH)
+    app_id = questionary.text(
+        "输入飞书应用 App ID:",
+        default=os.getenv("FEISHU_APP_ID", ""),
+        style=morty_style,
+    ).ask()
+    if not app_id:
+        console.print("[dim #8d52ff]未填写 App ID，配置已取消。[/dim #8d52ff]")
+        return
+
+    app_secret = questionary.password(
+        "输入飞书应用 App Secret:",
+        style=morty_style,
+    ).ask()
+    if app_secret is None:
+        console.print("[dim #8d52ff]配置已取消。[/dim #8d52ff]")
+        return
+    if not app_secret:
+        app_secret = os.getenv("FEISHU_APP_SECRET", "")
+    if not app_secret:
+        console.print("[dim #8d52ff]未填写 App Secret，配置已取消。[/dim #8d52ff]")
+        return
+
+    if not os.path.exists(ENV_PATH):
+        open(ENV_PATH, "a", encoding="utf-8").close()
+
+    token_mode = "user_access_token" if normalized_identity == "user" else "tenant_access_token"
+    oauth = normalized_identity == "user"
+    values = {
+        "FEISHU_MCP_ENABLED": "1",
+        "FEISHU_APP_ID": app_id.strip(),
+        "FEISHU_APP_SECRET": app_secret.strip(),
+        "FEISHU_MCP_TOOLS": tools.strip() or "preset.light",
+        "FEISHU_MCP_DOMAIN": domain.strip() or "https://open.feishu.cn",
+        "FEISHU_MCP_LANGUAGE": "zh",
+        "FEISHU_MCP_TOKEN_MODE": token_mode,
+        "FEISHU_MCP_OAUTH": "1" if oauth else "0",
+    }
+    logging.getLogger("dotenv.main").setLevel(logging.ERROR)
+    for key, value in values.items():
+        set_key(ENV_PATH, key, value)
+        os.environ[key] = value
+
+    settings = FeishuMCPSettings.from_env()
+    try:
+        if oauth:
+            callback, wrapped_callback = feishu_oauth_redirect_urls()
+            console.print(
+                "[bold #00ffff]即将打开浏览器，请完成飞书用户授权。[/bold #00ffff]\n"
+                "[dim]飞书应用后台需同时配置以下 OAuth 2.0 重定向 URL：[/dim]\n"
+                f"[cyan]{callback}[/cyan]\n"
+                f"[cyan]{wrapped_callback}[/cyan]"
+            )
+            run_feishu_oauth_login(settings)
+        with Status(
+            "[bold #8d52ff]正在连接飞书 MCP 并读取工具列表...[/bold #8d52ff]",
+            spinner="dots",
+            spinner_style="#00ffff",
+        ):
+            loaded_tools = load_feishu_mcp_tools(settings)
+    except Exception as exc:
+        console.print(
+            "[bold red]飞书 MCP 配置已保存，但连接验证失败。[/bold red]\n"
+            f"[dim]{exc}[/dim]"
+        )
+        raise typer.Exit(code=1)
+
+    names = ", ".join(tool.name for tool in loaded_tools[:8])
+    if len(loaded_tools) > 8:
+        names += ", ..."
+    console.print(
+        Panel(
+            f"已连接飞书 MCP，共加载 {len(loaded_tools)} 个工具。\n"
+            f"身份模式：{token_mode}\n"
+            f"工具：{names or '(无)'}\n\n"
+            "重新执行 mortyclaw run 后即可在对话中使用飞书。",
+            title="[bold white]Feishu MCP Connected[/bold white]",
+            border_style="#00ffff",
+        )
+    )
+
+
+@app.command("feishu-bot")
+def run_feishu_bot():
+    """启动飞书长连接机器人，将收到的消息交给 MortyClaw 回复。"""
+    from mortyclaw.core.integrations import FeishuBotSettings, serve_feishu_bot
+
+    load_dotenv(ENV_PATH)
+    provider = os.getenv("DEFAULT_PROVIDER", "").strip()
+    model = os.getenv("DEFAULT_MODEL", "").strip()
+    if not provider or not model:
+        _show_boot_error()
+        raise typer.Exit(code=1)
+    if provider != "ollama":
+        if provider in ["openai", "aliyun", "dashscope", "z.ai", "tencent", "other"]:
+            if not _has_configured_compatible_provider_key(provider):
+                _show_boot_error()
+                raise typer.Exit(code=1)
+        elif provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
+            _show_boot_error()
+            raise typer.Exit(code=1)
+
+    settings = FeishuBotSettings.from_env()
+    try:
+        settings.validate()
+    except RuntimeError as exc:
+        console.print(f"[bold red]飞书机器人配置不完整：[/bold red] {exc}")
+        raise typer.Exit(code=1)
+
+    def show_ready() -> None:
+        console.print(
+            Panel(
+                "飞书长连接已建立，MortyClaw 正在等待消息。\n"
+                "私聊会直接回复；群聊默认需要先 @机器人。\n"
+                "发送 /reset 可清空当前飞书会话上下文。\n\n"
+                "按 Ctrl+C 可安全停止。",
+                title="[bold white]Feishu Bot Online[/bold white]",
+                border_style="#00ffff",
+            )
+        )
+
+    try:
+        asyncio.run(
+            serve_feishu_bot(
+                provider=provider,
+                model=model,
+                settings=settings,
+                ready_callback=show_ready,
+            )
+        )
+    except KeyboardInterrupt:
+        console.print("\n[dim #8d52ff]飞书机器人已安全停止。[/dim #8d52ff]")
+    except Exception as exc:
+        console.print(
+            "[bold red]飞书机器人启动失败。[/bold red]\n"
+            f"[dim]{exc}[/dim]\n\n"
+            "请确认飞书开放平台已启用长连接事件订阅，并订阅 im.message.receive_v1。"
+        )
+        raise typer.Exit(code=1)
 
 @app.command("monitor")
 def run_monitor(

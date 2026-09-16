@@ -75,6 +75,7 @@ from ..runtime_graph import (
     make_reviewer_node,
     make_router_node,
 )
+from ..integrations import load_feishu_mcp_tools
 from ..skill_loader import load_dynamic_skills
 from ..storage.runtime import get_conversation_writer, get_session_repository
 from ..tools.builtins import BUILTIN_TOOLS

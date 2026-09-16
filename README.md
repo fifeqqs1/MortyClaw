@@ -94,6 +94,12 @@ mortyclaw run --thread-id local_geek_master
 mortyclaw run --new
 ```
 
+如果 Windows PowerShell 尚未激活项目虚拟环境，可以直接运行：
+
+```powershell
+.\.venv\Scripts\mortyclaw.exe run
+```
+
 交互界面内置快捷命令：
 
 | 命令 | 作用 |
@@ -128,11 +134,77 @@ heartbeat 会扫描到期任务，将事件写入 `session_inbox`。对应会话
 | `mortyclaw run` | 启动默认会话 `local_geek_master` |
 | `mortyclaw run --thread-id <id>` | 启动或恢复指定会话 |
 | `mortyclaw run --new` | 创建短编号新会话，例如 `session-1`、`session-2` |
+| `mortyclaw feishu-bot` | 启动飞书长连接机器人并接收、回复消息 |
 | `mortyclaw monitor --latest` | 监控最近活跃会话 |
 | `mortyclaw monitor --thread-id <id>` | 监控指定会话 |
 | `mortyclaw sessions` | 在 CLI 查看会话列表 |
 | `mortyclaw heartbeat` | 启动独立心跳进程 |
 | `mortyclaw migrate-tasks` | 将旧 `tasks.json` 导入 SQLite |
+
+## 连接飞书 MCP
+
+MortyClaw 可以把飞书官方 OpenAPI MCP 加载为 Agent 工具，用于读取云文档、检索多维表格、查看消息，以及在审批后执行发消息、改文档、创建日程等操作。
+
+### 1. 准备飞书应用
+
+1. 在[飞书开放平台](https://open.feishu.cn/app)创建企业自建应用。
+2. 根据准备使用的工具开通对应权限，并发布应用版本。
+3. 准备应用的 App ID 和 App Secret。
+4. 本机需安装 Node.js 20 或更高版本；飞书 MCP 由官方 npm 包 `@larksuiteoapi/lark-mcp` 提供。
+
+### 2. 配置连接
+
+应用身份适合访问应用可见的数据：
+
+```bash
+mortyclaw feishu-config --identity app
+```
+
+如果需要读取个人文档、个人日历或以本人身份发送消息，使用用户身份：
+
+```bash
+mortyclaw feishu-config --identity user
+```
+
+用户身份会打开浏览器完成 OAuth 授权。需要先在飞书应用后台同时配置以下两个 OAuth 2.0 重定向 URL（官方 MCP 0.5.1 的本地登录流程会使用第二个完整地址）：
+
+```text
+http://localhost:3000/callback
+http://localhost:3000/callback?redirect_uri=http://localhost:3000/callback
+```
+
+默认加载 `preset.light`，减少工具 schema 占用。需要完整默认工具集时可以执行：
+
+```bash
+mortyclaw feishu-config --identity app --tools preset.default
+```
+
+`preset.default` 不包含飞书文档块编辑接口。需要创建、追加、更新和删除文档块时，可在 `.env` 的 `FEISHU_MCP_TOOLS` 中保留 `preset.light`，并追加这些工具：
+
+```text
+docx.v1.document.create,docx.v1.document.get,docx.v1.document.convert,docx.v1.documentBlock.list,docx.v1.documentBlock.get,docx.v1.documentBlock.batchUpdate,docx.v1.documentBlock.patch,docx.v1.documentBlockChildren.get,docx.v1.documentBlockChildren.create,docx.v1.documentBlockDescendant.create,docx.v1.documentBlockChildren.batchDelete
+```
+
+文档读取工具可以直接使用；创建、修改、追加和删除操作会进入 MortyClaw 的审批流程，确认后才会调用飞书。
+
+配置保存在本地 `.env`，不会提交到 Git。MortyClaw 启动时会自动连接 MCP；飞书读取工具可走快速路径，外部写入操作会进入现有 approval gate。
+
+### 3. 启用机器人聊天
+
+MCP 负责让 Agent 主动调用飞书 API；机器人聊天还需要接收飞书消息事件。在飞书开放平台完成以下配置：
+
+1. 在“事件与回调”中选择“使用长连接接收事件”。
+2. 添加事件 `im.message.receive_v1`（接收消息）。
+3. 开通机器人收发消息权限，包括 `im:message` 和 `im:message:send_as_bot`。
+4. 发布新版本，并确认应用在当前企业中可用。
+
+然后保持以下命令运行：
+
+```bash
+mortyclaw feishu-bot
+```
+
+机器人默认直接处理私聊消息；群聊中只有明确 @机器人时才响应。每个私聊或群聊使用独立的 MortyClaw 会话上下文，发送 `/reset` 可以清空当前会话，发送 `/help` 可以查看提示。官方 SDK 会过滤机器人自己发送的消息，并对重复事件进行去重。
 
 ## 系统架构
 

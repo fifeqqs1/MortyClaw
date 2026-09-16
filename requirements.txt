@@ -18,6 +18,10 @@ langchain>=0.2.0
 langchain-openai>=1.0.0
 langchain-anthropic>=1.0.0
 langchain-community>=0.4.0
+langchain-mcp-adapters>=0.2.1
+
+# 飞书机器人长连接
+lark-channel-sdk>=1.4.0,<2.0.0
 
 # LLM 提供商 SDK
 openai>=1.0.0
