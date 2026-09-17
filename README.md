@@ -206,6 +206,36 @@ mortyclaw feishu-bot
 
 机器人默认直接处理私聊消息；群聊中只有明确 @机器人时才响应。每个私聊或群聊使用独立的 MortyClaw 会话上下文，发送 `/reset` 可以清空当前会话，发送 `/help` 可以查看提示。官方 SDK 会过滤机器人自己发送的消息，并对重复事件进行去重。
 
+## 连接 Zotero 与 Arxiv MCP
+
+安装研究 MCP 可选依赖：
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[research-mcp]"
+```
+
+Zotero 第一版采用严格只读模式。请启动 Zotero 7 或更高版本，并在“设置 → 高级 → 其他”中启用“允许此计算机上的其他应用与 Zotero 通信”，然后执行：
+
+```bash
+mortyclaw mcp configure zotero
+```
+
+Arxiv MCP 提供论文搜索、摘要、正文、LaTeX 与引文工具，并把下载的论文保存在 `workspace/arxiv-papers`：
+
+```bash
+mortyclaw mcp configure arxiv
+```
+
+查看或禁用服务：
+
+```bash
+mortyclaw mcp status
+mortyclaw mcp disable zotero
+mortyclaw mcp disable arxiv
+```
+
+Zotero 的写入工具不会注册到 Agent。Arxiv 的搜索和读取可以直接使用；下载论文、主题监控、删除监控和重建索引等会改变本地状态的操作需要审批。任一 MCP 连接失败时，其他服务和 MortyClaw 主程序仍会继续运行。
+
 ## 系统架构
 
 MortyClaw 的主链路是一个受治理的运行图：
@@ -326,7 +356,7 @@ High 阶段维护一份 merged `structured_handoff`，包含目标、当前状�
 - Worker 编排：`delegate_subagent`、`delegate_subagents`、`wait_subagents`、`list_subagents`、`cancel_subagent`、`cancel_subagents`
 - 项目代码：`read_project_file`、`search_project_code`、`show_git_diff`、`edit_project_file`、`write_project_file`、`apply_project_patch`、`run_project_tests`、`run_project_command`
 - 文件和 shell：`list_office_files`、`read_office_file`、`write_office_file`、`execute_office_shell`
-- 联网和论文：`tavily_web_search`、`arxiv_rag_ask`
+- 联网和论文：`tavily_web_search`、`arxiv_*` MCP 工具
 - 外部内容摘要：`summarize_content`
 - 系统信息：`get_system_model_info`
 

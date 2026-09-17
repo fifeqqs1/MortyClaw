@@ -10,6 +10,7 @@ from rich.panel import Panel
 from rich.status import Status
 from dotenv import set_key, load_dotenv, unset_key
 import sys
+import socket
 
 from mortyclaw.core.provider import get_provider
 from mortyclaw.core.provider import (
@@ -43,6 +44,7 @@ if PROJECT_ROOT not in sys.path:
 
 app = typer.Typer(help="MortyClaw - 极客专属的赛博智能终端")
 gc_app = typer.Typer(help="运行态垃圾回收与归档工具")
+mcp_app = typer.Typer(help="配置、检查和禁用 MCP 服务")
 console = Console()
 
 morty_style = questionary.Style([
@@ -58,6 +60,7 @@ morty_style = questionary.Style([
 ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 SHORT_SESSION_ID_PATTERN = re.compile(r"^session-(\d{1,5})$")
 app.add_typer(gc_app, name="gc")
+app.add_typer(mcp_app, name="mcp")
 
 
 def _compatible_provider_primary_api_key(provider: str) -> str:
@@ -401,6 +404,92 @@ def run_agent(
     mortyclaw_main.main(thread_id=resolved_thread_id)
 
 
+def _ensure_env_file() -> None:
+    if not os.path.exists(ENV_PATH):
+        open(ENV_PATH, "a", encoding="utf-8").close()
+
+
+@mcp_app.command("configure")
+def configure_mcp_service(
+    service: str = typer.Argument(..., help="要配置的服务：zotero 或 arxiv"),
+):
+    """启用并验证 Zotero 或 Arxiv MCP。"""
+    normalized = service.strip().lower()
+    if normalized not in {"zotero", "arxiv"}:
+        console.print("[bold red]服务只支持 zotero 或 arxiv。[/bold red]")
+        raise typer.Exit(code=2)
+
+    _ensure_env_file()
+    if normalized == "zotero":
+        values = {
+            "ZOTERO_MCP_ENABLED": "1",
+            "ZOTERO_LOCAL": "true",
+            "ZOTERO_MCP_TOOLSETS": "none",
+        }
+        try:
+            with socket.create_connection(("127.0.0.1", 23119), timeout=1):
+                pass
+        except OSError:
+            console.print(
+                "[yellow]没有检测到 Zotero Local API。请启动 Zotero，并在“设置 → 高级 → "
+                "其他”中启用“允许此计算机上的其他应用与 Zotero 通信”。[/yellow]"
+            )
+    else:
+        values = {
+            "ARXIV_MCP_ENABLED": "1",
+            "ARXIV_MCP_STORAGE_PATH": "workspace/arxiv-papers",
+        }
+
+    for key, value in values.items():
+        set_key(ENV_PATH, key, value)
+        os.environ[key] = value
+
+    from mortyclaw.core.integrations import load_mcp_tools
+
+    try:
+        with Status(f"[bold #8d52ff]正在连接 {normalized} MCP...[/bold #8d52ff]", spinner="dots"):
+            tools = load_mcp_tools(strict=True, service=normalized)
+    except Exception as exc:
+        console.print(
+            f"[bold red]{normalized} MCP 已启用，但连接验证失败。[/bold red]\n"
+            f"[dim]错误类型：{type(exc).__name__}。请先执行 pip install -e \".[research-mcp]\"。[/dim]"
+        )
+        raise typer.Exit(code=1)
+    console.print(f"[bold green]{normalized} MCP 已连接，共加载 {len(tools)} 个工具。[/bold green]")
+
+
+@mcp_app.command("disable")
+def disable_mcp_service(
+    service: str = typer.Argument(..., help="要禁用的服务：zotero 或 arxiv"),
+):
+    normalized = service.strip().lower()
+    key_by_service = {"zotero": "ZOTERO_MCP_ENABLED", "arxiv": "ARXIV_MCP_ENABLED"}
+    if normalized not in key_by_service:
+        console.print("[bold red]服务只支持 zotero 或 arxiv。[/bold red]")
+        raise typer.Exit(code=2)
+    _ensure_env_file()
+    set_key(ENV_PATH, key_by_service[normalized], "0")
+    os.environ[key_by_service[normalized]] = "0"
+    console.print(f"[bold green]已禁用 {normalized} MCP。[/bold green]")
+
+
+@mcp_app.command("status")
+def show_mcp_status(
+    no_probe: bool = typer.Option(False, "--no-probe", help="只检查配置，不连接 Server"),
+):
+    """显示 MCP 服务状态，错误信息会自动脱敏。"""
+    from mortyclaw.core.integrations import MCPManager
+
+    rows = []
+    for status in MCPManager().statuses(probe=not no_probe):
+        state = "connected" if status.connected else ("disabled" if not status.enabled else "unavailable")
+        rows.append(
+            f"{status.name}: {state}, tools={status.tool_count}, "
+            f"command={status.command or '-'}, error={status.error or '-'}"
+        )
+    console.print(Panel("\n".join(rows), title="MCP Status", border_style="#00ffff"))
+
+
 @app.command("feishu-config")
 def configure_feishu(
     identity: str = typer.Option(
@@ -423,7 +512,7 @@ def configure_feishu(
     from mortyclaw.core.integrations import (
         FeishuMCPSettings,
         feishu_oauth_redirect_urls,
-        load_feishu_mcp_tools,
+        load_mcp_tools,
         run_feishu_oauth_login,
     )
 
@@ -491,7 +580,7 @@ def configure_feishu(
             spinner="dots",
             spinner_style="#00ffff",
         ):
-            loaded_tools = load_feishu_mcp_tools(settings)
+            loaded_tools = load_mcp_tools(strict=True, service="feishu")
     except Exception as exc:
         console.print(
             "[bold red]飞书 MCP 配置已保存，但连接验证失败。[/bold red]\n"

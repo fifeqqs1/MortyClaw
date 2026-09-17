@@ -87,7 +87,7 @@ router 的职责是判断任务路径：
 - 简单低风险问题走 `fast`。
 - 多步骤任务走 `slow`。
 - 写入、删除、shell、任务修改等高风险请求走 `slow`。
-- arXiv/论文类问题优先直接调用 `arxiv_rag_ask`。
+- arXiv/论文类问题通过统一 MCP 管理层选择 `arxiv_*` 工具。
 
 router 同时会做两件和记忆有关的事情：
 

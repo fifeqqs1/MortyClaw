@@ -3,8 +3,10 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
+from typer.testing import CliRunner
 
-from entry.cli import _generate_thread_id, _resolve_default_thread_id
+from entry.cli import _generate_thread_id, _resolve_default_thread_id, app
+from mortyclaw.core.integrations import MCPServiceStatus
 from entry.main import (
     _count_rendered_output_lines,
     _effective_plan_render_state,
@@ -63,6 +65,30 @@ class CliSessionIdTests(unittest.TestCase):
         repo = FakeSessionRepository([])
 
         self.assertEqual(_resolve_default_thread_id(repo), "session-1")
+
+
+class CliMCPTests(unittest.TestCase):
+    @patch("mortyclaw.core.integrations.MCPManager.statuses")
+    def test_mcp_status_reports_sanitized_error_type(self, statuses):
+        statuses.return_value = [
+            MCPServiceStatus(
+                name="arxiv",
+                enabled=True,
+                command="arxiv-mcp-server",
+                error="ConnectionError",
+            )
+        ]
+
+        result = CliRunner().invoke(app, ["mcp", "status"])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("ConnectionError", result.output)
+        self.assertNotIn("API_KEY", result.output)
+
+    def test_mcp_configure_rejects_unknown_service(self):
+        result = CliRunner().invoke(app, ["mcp", "configure", "unknown"])
+
+        self.assertEqual(result.exit_code, 2)
 
 
 class CliRuntimeThreadSelectionTests(unittest.TestCase):

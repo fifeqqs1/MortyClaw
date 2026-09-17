@@ -7,9 +7,6 @@ from .base import mortyclaw_tool
 
 
 TAVILY_SEARCH_URL = "https://api.tavily.com/search"
-DEFAULT_ARXIV_RAG_API_BASE = "http://127.0.0.1:8001"
-DEFAULT_ARXIV_RAG_FEISHU_REPLY_PATH = "/api/v1/feishu/reply"
-DEFAULT_ARXIV_RAG_SESSION_ID = "mortyclaw_default"
 MORTYCLAW_PASSTHROUGH_FLAG = "_mortyclaw_passthrough"
 
 
@@ -18,28 +15,6 @@ def _compact_text(value: str, limit: int = 400) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
-
-
-def _post_json(url: str, payload: dict, headers: dict | None = None, timeout: int = 30) -> dict:
-    body = json.dumps(payload).encode("utf-8")
-    req = request.Request(
-        url,
-        data=body,
-        headers={"Content-Type": "application/json", **(headers or {})},
-        method="POST",
-    )
-
-    with request.urlopen(req, timeout=timeout) as resp:
-        raw = resp.read().decode("utf-8")
-    return json.loads(raw)
-
-
-def _get_first_env(*keys: str, default: str = "") -> str:
-    for key in keys:
-        value = os.getenv(key, "").strip()
-        if value:
-            return value
-    return default
 
 
 @mortyclaw_tool
@@ -163,86 +138,3 @@ def tavily_web_search(
             lines.append(f"   相关度: {score:.3f}")
 
     return "\n".join(lines)
-
-
-@mortyclaw_tool
-def arxiv_rag_ask(
-    query: str,
-    session_id: str = "",
-) -> str:
-    """
-    调用本地 arxiv_rag 的 Feishu 会话入口，直接返回最终回答。
-    适合处理以下场景：
-    1. 用户想查学术论文、arXiv 论文、研究方法、模型原理、实验结论。
-    2. 用户希望复用 arxiv_rag 在飞书机器人里的论文推荐、跟进提问和会话记忆逻辑。
-    3. MortyClaw 只做转发，不自行改写 query，也不参与二次总结。
-
-    参数说明：
-    - query: 用户的原始学术问题。
-    - session_id: 会话 ID。MortyClaw 内部应传当前 thread_id，用于复用 Feishu 会话记忆。
-
-    重要约束：
-    - 本工具只把原始 query 和 session_id 发给 arxiv_rag。
-    - 不再传检索控制参数，也不在 MortyClaw 侧选择 /ask 或 /ask-agentic。
-    - 一旦本工具成功返回，MortyClaw 会直接把结果发给用户，不再二次改写。
-    """
-    if not isinstance(query, str) or not query.strip():
-        return "arxiv_rag 问答参数错误：query 不能为空。"
-
-    base_url = _get_first_env(
-        "ARXIV_RAG_API_BASE",
-        "FEISHU__API_BASE_URL",
-        default=DEFAULT_ARXIV_RAG_API_BASE,
-    ).rstrip("/")
-    endpoint_path = _get_first_env(
-        "ARXIV_RAG_FEISHU_REPLY_PATH",
-        default=DEFAULT_ARXIV_RAG_FEISHU_REPLY_PATH,
-    )
-
-    try:
-        timeout_seconds = int(
-            _get_first_env(
-                "ARXIV_RAG_TIMEOUT_SECONDS",
-                "FEISHU__REQUEST_TIMEOUT_SECONDS",
-                default="60",
-            )
-        )
-    except ValueError:
-        return "arxiv_rag 问答参数错误：ARXIV_RAG_TIMEOUT_SECONDS 必须是整数。"
-
-    payload = {
-        "query": query,
-        "session_id": (session_id or "").strip() or DEFAULT_ARXIV_RAG_SESSION_ID,
-    }
-
-    try:
-        data = _post_json(f"{base_url}{endpoint_path}", payload, timeout=timeout_seconds)
-    except error.HTTPError as exc:
-        try:
-            detail = exc.read().decode("utf-8")
-            parsed = json.loads(detail) if detail else {}
-            message = parsed.get("detail") or parsed.get("error") or detail
-        except Exception:
-            message = str(exc)
-        return f"arxiv_rag 调用失败：HTTP {exc.code}，{_compact_text(message, 200)}"
-    except error.URLError as exc:
-        return f"arxiv_rag 调用失败：网络错误，{exc.reason}"
-    except json.JSONDecodeError:
-        return "arxiv_rag 调用失败：返回结果不是合法 JSON。"
-    except Exception as exc:
-        return f"arxiv_rag 调用失败：{exc}"
-
-    answer = data.get("answer")
-    if not isinstance(answer, str) or not answer.strip():
-        return "arxiv_rag 调用失败：返回结果中缺少 answer 字段。"
-
-    passthrough_payload = {
-        MORTYCLAW_PASSTHROUGH_FLAG: True,
-        "tool": "arxiv_rag_ask",
-        "display_text": answer,
-        "query": data.get("query", query),
-        "answer": answer,
-        "session_id": data.get("session_id", payload["session_id"]),
-        "endpoint_path": endpoint_path,
-    }
-    return json.dumps(passthrough_payload, ensure_ascii=False)

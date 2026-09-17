@@ -159,7 +159,7 @@ def is_feishu_tool(tool_or_name: BaseTool | str | None) -> bool:
     return name.startswith(FEISHU_TOOL_PREFIX)
 
 
-def _feishu_tool_meta(tool: BaseTool) -> ToolMeta:
+def feishu_tool_meta(tool: BaseTool) -> ToolMeta:
     name = str(getattr(tool, "name", "") or "").strip()
     # Official tool names may retain camelCase operation names even when snake
     # naming is requested (for example appTableRecord_batchCreate/getNode).
@@ -198,7 +198,11 @@ async def _load_feishu_mcp_tools_async(settings: FeishuMCPSettings) -> list[Base
         handle_tool_errors=True,
     )
     tools = await client.get_tools()
-    return [attach_tool_meta(tool, _feishu_tool_meta(tool)) for tool in tools]
+    return [attach_tool_meta(tool, feishu_tool_meta(tool)) for tool in tools]
+
+
+# Backward-compatible private alias for existing callers and tests.
+_feishu_tool_meta = feishu_tool_meta
 
 
 def _run_awaitable_blocking(awaitable: Awaitable[_T]) -> _T:

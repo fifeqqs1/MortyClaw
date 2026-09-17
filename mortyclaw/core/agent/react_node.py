@@ -123,22 +123,6 @@ def _extract_requested_deferred_tool_names(messages: list) -> set[str]:
     return requested
 
 
-def _should_use_direct_arxiv_shortcut(
-    *,
-    active_route: str,
-    route_source: str,
-    effective_user_query: str,
-    should_direct_route_to_arxiv_rag_fn,
-) -> bool:
-    if active_route != "fast":
-        return False
-    if route_source not in {"arxiv_direct", "pure_paper_task"}:
-        return False
-    if not effective_user_query:
-        return False
-    return bool(should_direct_route_to_arxiv_rag_fn(effective_user_query))
-
-
 def _extract_tool_payload(message) -> dict | None:
     if getattr(message, "type", "") != "tool":
         return None
@@ -334,8 +318,6 @@ class ReactNodeDependencies:
     select_tools_for_autonomous_slow_fn: object
     split_tools_for_deferred_schema_fn: object
     route_eager_tool_names_fn: object
-    should_direct_route_to_arxiv_rag_fn: object
-    arxiv_rag_tool: object
     extract_passthrough_payload_fn: object
     trim_context_messages_fn: object
     compact_context_messages_deterministic_fn: object
@@ -694,50 +676,6 @@ def run_react_agent_node(
     else:
         active_llm_with_tools = llm if hasattr(llm, "invoke") else llm_with_tools
     set_active_tool_scope_names([getattr(tool, "name", "") for tool in bound_tools])
-
-    route_source = str(working_state.get("route_source", "") or "")
-    if _should_use_direct_arxiv_shortcut(
-        active_route=active_route,
-        route_source=route_source,
-        effective_user_query=effective_user_query,
-        should_direct_route_to_arxiv_rag_fn=deps.should_direct_route_to_arxiv_rag_fn,
-    ):
-        deps.audit_logger_instance.log_event(
-            thread_id=thread_id,
-            event="tool_call",
-            tool="arxiv_rag_ask",
-            args={"query": effective_user_query, "session_id": thread_id},
-        )
-        tool_result = deps.arxiv_rag_tool.invoke({"query": effective_user_query, "session_id": thread_id})
-        deps.audit_logger_instance.log_event(
-            thread_id=thread_id,
-            event="tool_result",
-            tool="arxiv_rag_ask",
-            result_summary=tool_result[:200],
-        )
-
-        passthrough_payload = deps.extract_passthrough_payload_fn(tool_result)
-        direct_reply = tool_result
-        if passthrough_payload is not None:
-            display_text = passthrough_payload.get("display_text") or passthrough_payload.get("answer")
-            if isinstance(display_text, str) and display_text.strip():
-                direct_reply = display_text
-
-        deps.audit_logger_instance.log_event(
-            thread_id=thread_id,
-            event="ai_message",
-            content=direct_reply,
-        )
-        final_message = deps.annotate_ai_message_fn(
-            AIMessage(content=direct_reply),
-            mortyclaw_response_kind=deps.response_kind_final_answer,
-        )
-        return deps.with_working_memory_fn(state, {
-            "route": active_route,
-            "final_answer": direct_reply,
-            "run_status": "done",
-            "messages": [final_message],
-        })
 
     current_summary = state.get("summary", "")
     model_name = _resolve_llm_model_name(llm)

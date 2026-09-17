@@ -1,6 +1,5 @@
 from . import (
     apply_project_patch,
-    arxiv_rag_ask,
     calculator,
     cancel_subagent,
     cancel_subagents,
@@ -61,7 +60,6 @@ BUILTIN_TOOL_META = {
     "restore_context_artifact": _meta("restore_context_artifact", {"context_read"}),
     "summarize_content": _meta("summarize_content", {"web_read"}),
     "tavily_web_search": _meta("tavily_web_search", {"web_read"}),
-    "arxiv_rag_ask": _meta("arxiv_rag_ask", {"web_read"}),
     "save_user_profile": _meta(
         "save_user_profile",
         {"memory_write"},
@@ -172,7 +170,6 @@ BUILTIN_TOOLS = [
     restore_context_artifact,
     summarize_content,
     tavily_web_search,
-    arxiv_rag_ask,
     save_user_profile,
     list_office_files,
     read_office_file,

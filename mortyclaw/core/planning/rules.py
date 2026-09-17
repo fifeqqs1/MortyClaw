@@ -500,7 +500,7 @@ def _default_verification_hint(step_text: str, intent: str) -> str:
     if intent == "test_verify":
         return "记录测试命令、通过/失败状态和关键报错。"
     if intent == "paper_research":
-        return "记录 arxiv_rag_ask 返回的关键方法点、证据片段或论文结论。"
+        return "记录 Arxiv MCP 返回的关键方法点、证据片段或论文结论。"
     if intent in {"code_edit", "file_write"}:
         return "查看 diff，并在可能时运行相关验证命令。"
     if intent == "shell_execute":

@@ -14,6 +14,12 @@ setup(
     version="1.0.0",
     packages=find_packages(),
     install_requires=parse_requirements('requirements.txt'),
+    extras_require={
+        "research-mcp": [
+            "zotero-mcp-server==0.9.1",
+            "arxiv-mcp-server==0.7.2",
+        ],
+    },
     entry_points={
         "console_scripts": [
             "mortyclaw=entry.cli:main",

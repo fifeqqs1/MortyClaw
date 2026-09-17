@@ -15,6 +15,15 @@ from .feishu_bot import (
     feishu_thread_id,
     serve_feishu_bot,
 )
+from .mcp_manager import (
+    MCPManager,
+    MCPServerConfig,
+    MCPServiceStatus,
+    build_arxiv_config,
+    build_zotero_config,
+    is_mcp_tool,
+    load_mcp_tools,
+)
 
 __all__ = [
     "FeishuMCPSettings",
@@ -28,4 +37,11 @@ __all__ = [
     "build_feishu_channel",
     "feishu_thread_id",
     "serve_feishu_bot",
+    "MCPManager",
+    "MCPServerConfig",
+    "MCPServiceStatus",
+    "build_arxiv_config",
+    "build_zotero_config",
+    "is_mcp_tool",
+    "load_mcp_tools",
 ]

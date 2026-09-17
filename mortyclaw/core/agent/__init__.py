@@ -58,7 +58,6 @@ from ..routing import (
     infer_tavily_topic as _infer_tavily_topic,
     normalize_tavily_tool_calls as _normalize_tavily_tool_calls,
     route_after_router as _route_after_router,
-    should_direct_route_to_arxiv_rag as _should_direct_route_to_arxiv_rag,
 )
 from ..runtime.execution_guard import (
     build_pending_execution_snapshot as _build_pending_execution_snapshot,
@@ -75,11 +74,10 @@ from ..runtime_graph import (
     make_reviewer_node,
     make_router_node,
 )
-from ..integrations import load_feishu_mcp_tools
+from ..integrations import load_mcp_tools
 from ..skill_loader import load_dynamic_skills
 from ..storage.runtime import get_conversation_writer, get_session_repository
 from ..tools.builtins import BUILTIN_TOOLS
-from ..tools.web import arxiv_rag_ask
 from .app import create_agent_app
 from .memory_bridge import (
     build_long_term_memory_prompt as _build_long_term_memory_prompt_impl,
@@ -312,8 +310,6 @@ def _run_react_agent_node(
         split_tools_for_deferred_schema_fn=_split_tools_for_deferred_schema,
         route_eager_tool_names_fn=_route_eager_tool_names,
         select_tools_for_structured_slow_fn=_select_tools_for_structured_slow,
-        should_direct_route_to_arxiv_rag_fn=_should_direct_route_to_arxiv_rag,
-        arxiv_rag_tool=arxiv_rag_ask,
         extract_passthrough_payload_fn=_extract_passthrough_payload,
         trim_context_messages_fn=trim_context_messages,
         compact_context_messages_deterministic_fn=compact_context_messages_deterministic,

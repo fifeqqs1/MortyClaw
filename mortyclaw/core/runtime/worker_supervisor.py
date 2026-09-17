@@ -34,7 +34,7 @@ WORKER_TOOLSETS = {
     "project_read": {"read_project_file", "search_project_code", "show_git_diff", "update_todo_list"},
     "project_write": {"edit_project_file", "write_project_file", "apply_project_patch"},
     "project_verify": {"run_project_tests", "run_project_command"},
-    "research": {"tavily_web_search", "summarize_content", "arxiv_rag_ask"},
+    "research": {"tavily_web_search", "summarize_content"},
 }
 WORKER_TOOLSETS["project_full"] = (
     WORKER_TOOLSETS["project_read"]
@@ -370,14 +370,24 @@ class AsyncWorkerSupervisor:
 
     def _load_toolset(self, effective_tools: list[str], *, role: str):
         from ..tools.builtins import BUILTIN_TOOLS
+        from ..integrations import load_mcp_tools
+        from ..tools.meta import is_fast_route_safe, get_tool_meta
 
         allowed = set(effective_tools or []) or set(WORKER_ROLE_ALLOWED_DEFAULTS.get(role, WORKER_ROLE_ALLOWED_DEFAULTS["explore"]))
         filtered = []
-        for tool in BUILTIN_TOOLS:
+        candidates = list(BUILTIN_TOOLS)
+        if role == "research":
+            candidates.extend(load_mcp_tools(strict=False))
+        for tool in candidates:
             tool_name = getattr(tool, "name", "")
             if tool_name in RESTRICTED_WORKER_TOOL_NAMES:
                 continue
-            if tool_name in allowed:
+            is_readonly_research_mcp = (
+                role == "research"
+                and str(tool_name).startswith(("arxiv_", "zotero_"))
+                and is_fast_route_safe(get_tool_meta(tool))
+            )
+            if tool_name in allowed or is_readonly_research_mcp:
                 filtered.append(tool)
         return filtered
 

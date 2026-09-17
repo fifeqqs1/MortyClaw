@@ -15,7 +15,7 @@ from ..project_tools import (
     write_project_file,
 )
 from ..summarize import summarize_content
-from ..web import arxiv_rag_ask, tavily_web_search
+from ..web import tavily_web_search
 from ...config import MEMORY_DIR, TASKS_FILE
 from ...logger import build_log_file_path
 from ...memory import (
@@ -406,7 +406,6 @@ __all__ = [
     "TodoInputItem",
     "UpdateTodoListArgs",
     "apply_project_patch",
-    "arxiv_rag_ask",
     "calculator",
     "cancel_subagent",
     "cancel_subagents",

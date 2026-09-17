@@ -97,8 +97,6 @@ class TestAgent(unittest.TestCase):
             select_tools_for_autonomous_slow_fn=lambda *_args, **_kwargs: [],
             split_tools_for_deferred_schema_fn=lambda tools, **_kwargs: (list(tools), [], []),
             route_eager_tool_names_fn=lambda *_args, **_kwargs: set(),
-            should_direct_route_to_arxiv_rag_fn=lambda _query: False,
-            arxiv_rag_tool=Mock(),
             extract_passthrough_payload_fn=lambda _payload: None,
             trim_context_messages_fn=trim_context_messages_fn,
             compact_context_messages_deterministic_fn=compact_default,
@@ -321,61 +319,6 @@ class TestAgent(unittest.TestCase):
 
         self.assertEqual(fake_provider.llm_with_tools.agent_call_count, 1)
         self.assertEqual(result["messages"][-1].content, "这是 arxiv_rag 的最终回答")
-
-    @patch('mortyclaw.core.agent.get_provider')
-    @patch('mortyclaw.core.agent.load_dynamic_skills')
-    @patch('mortyclaw.core.tools.builtins.BUILTIN_TOOLS', [])
-    @patch('mortyclaw.core.agent.arxiv_rag_ask')
-    def test_paper_query_routes_directly_to_arxiv_rag_without_llm_rewrite(
-        self,
-        mock_arxiv_rag_ask,
-        mock_load_skills,
-        mock_get_provider,
-    ):
-        """测试论文类问题直接把原始用户问题送给 arxiv_rag，不经过外层 LLM 改写"""
-        from mortyclaw.core.agent import create_agent_app
-        from mortyclaw.core.tools.web_tools import MORTYCLAW_PASSTHROUGH_FLAG
-
-        mock_load_skills.return_value = []
-
-        class FakeLLMWithTools:
-            def __init__(self):
-                self.call_count = 0
-
-            def invoke(self, _messages):
-                self.call_count += 1
-                raise AssertionError("论文直连 arxiv_rag 成功时不应该触发外层 LLM")
-
-        class FakeProvider:
-            def __init__(self):
-                self.llm_with_tools = FakeLLMWithTools()
-
-            def bind_tools(self, _tools):
-                return self.llm_with_tools
-
-        fake_provider = FakeProvider()
-        mock_get_provider.return_value = fake_provider
-        mock_arxiv_rag_ask.invoke.return_value = json.dumps({
-            MORTYCLAW_PASSTHROUGH_FLAG: True,
-            "display_text": "这是 arxiv_rag 的原始回答"
-        }, ensure_ascii=False)
-
-        app = create_agent_app(
-            provider_name="openai",
-            model_name="gpt-4o-mini",
-        )
-
-        original_query = "推荐一篇无人机论文"
-        result = app.invoke(
-            {"messages": [HumanMessage(content=original_query)], "summary": ""},
-            config={"configurable": {"thread_id": "test_direct_arxiv"}},
-        )
-
-        mock_arxiv_rag_ask.invoke.assert_called_once_with(
-            {"query": original_query, "session_id": "test_direct_arxiv"}
-        )
-        self.assertEqual(fake_provider.llm_with_tools.call_count, 1)
-        self.assertEqual(result["messages"][-1].content, "这是 arxiv_rag 的原始回答")
 
     def test_infer_tavily_topic_prefers_query_intent(self):
         """测试 Tavily topic 会根据查询意图区分 general / news"""
@@ -1573,7 +1516,7 @@ class TestAgent(unittest.TestCase):
         self.assertEqual(len(steps), 1)
         self.assertEqual(steps[0]["intent"], "paper_research")
         self.assertIn("论文方法", steps[0]["success_criteria"])
-        self.assertIn("arxiv_rag_ask", steps[0]["verification_hint"])
+        self.assertIn("Arxiv MCP", steps[0]["verification_hint"])
 
     def test_planner_normalize_plan_steps_overrides_analyze_for_obvious_file_write(self):
         """测试明显创建文件步骤即使被 LLM 标成 analyze，也会被纠偏成 file_write"""
@@ -1640,12 +1583,12 @@ class TestAgent(unittest.TestCase):
         self.assertEqual(steps[0]["intent"], "analyze")
 
     def test_select_tools_for_paper_research_step_only_exposes_arxiv_tool(self):
-        """测试 paper_research 步骤只开放 arxiv_rag_ask，不暴露项目读工具"""
+        """测试 paper_research 步骤只开放 Arxiv MCP，不暴露项目读工具"""
         from langchain_core.tools import tool
         from mortyclaw.core.planning import select_tools_for_current_step
 
         @tool
-        def arxiv_rag_ask(query: str = "", session_id: str = "") -> str:
+        def arxiv_search_papers(query: str = "") -> str:
             """Mock arxiv tool."""
             return "paper"
 
@@ -1654,7 +1597,7 @@ class TestAgent(unittest.TestCase):
             """Mock project read tool."""
             return "project"
 
-        tools = [arxiv_rag_ask, read_project_file]
+        tools = [arxiv_search_papers, read_project_file]
         selected = select_tools_for_current_step(
             {
                 "description": "提炼 arxiv 上 2024 年 Mamba 论文的方法差异",
@@ -1664,24 +1607,13 @@ class TestAgent(unittest.TestCase):
             current_project_path="/mnt/A/demo/repo",
         )
         selected_names = [tool.name for tool in selected]
-        self.assertIn("arxiv_rag_ask", selected_names)
+        self.assertIn("arxiv_search_papers", selected_names)
         self.assertNotIn("read_project_file", selected_names)
-
-    def test_direct_arxiv_shortcut_is_disabled_for_slow_route(self):
-        """测试 slow 路径即使当前步骤是论文问题，也不会触发 direct arxiv shortcut"""
-        from mortyclaw.core.agent.react_node import _should_use_direct_arxiv_shortcut
-
-        self.assertFalse(_should_use_direct_arxiv_shortcut(
-            active_route="slow",
-            route_source="mixed_research_task",
-            effective_user_query="解释一下 arxiv 上的 Mamba 论文",
-            should_direct_route_to_arxiv_rag_fn=lambda _query: True,
-        ))
 
     @patch('mortyclaw.core.agent.get_provider')
     @patch('mortyclaw.core.agent.load_dynamic_skills')
     def test_fast_project_analysis_does_not_expose_arxiv_tool(self, mock_load_skills, mock_get_provider):
-        """测试普通 fast 项目分析不会额外暴露 arxiv_rag_ask，避免误用论文工具"""
+        """测试普通 fast 项目分析不会额外暴露 Arxiv MCP，避免误用论文工具"""
         from langchain_core.tools import tool
         from mortyclaw.core.agent import create_agent_app
 
@@ -1703,7 +1635,7 @@ class TestAgent(unittest.TestCase):
             return "git diff"
 
         @tool
-        def arxiv_rag_ask(query: str = "", session_id: str = "") -> str:
+        def arxiv_search_papers(query: str = "") -> str:
             """Mock arxiv tool."""
             return "paper"
 
@@ -1735,7 +1667,7 @@ class TestAgent(unittest.TestCase):
         app = create_agent_app(
             provider_name="openai",
             model_name="gpt-4o-mini",
-            tools=[read_project_file, search_project_code, show_git_diff, arxiv_rag_ask, tavily_web_search],
+            tools=[read_project_file, search_project_code, show_git_diff, arxiv_search_papers, tavily_web_search],
         )
         result = app.invoke(
             {
@@ -1750,7 +1682,7 @@ class TestAgent(unittest.TestCase):
         self.assertIn("read_project_file", fast_bound_tools)
         self.assertIn("search_project_code", fast_bound_tools)
         self.assertIn("show_git_diff", fast_bound_tools)
-        self.assertNotIn("arxiv_rag_ask", fast_bound_tools)
+        self.assertNotIn("arxiv_search_papers", fast_bound_tools)
 
     def test_autonomous_slow_prompt_keeps_explicit_code_task_close_to_user_goal(self):
         """测试明确代码修改任务会提示模型先最小读取、再按需创建 Todo，而不是改写成泛化审查计划"""

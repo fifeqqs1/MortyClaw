@@ -17,7 +17,7 @@ from mortyclaw.core.tools.builtins import (
     modify_scheduled_task,
 )
 from mortyclaw.core.config import MEMORY_DIR, TASKS_FILE
-from mortyclaw.core.tools.web_tools import MORTYCLAW_PASSTHROUGH_FLAG, arxiv_rag_ask, tavily_web_search
+from mortyclaw.core.tools.web_tools import tavily_web_search
 from mortyclaw.core.runtime_store import get_session_repository, get_task_repository
 
 
@@ -189,132 +189,6 @@ class TestBuiltInTools(unittest.TestCase):
                     task_repo.list_tasks(thread_id="thread-task", statuses=("scheduled",)),
                     [],
                 )
-
-    @patch.dict(
-        os.environ,
-        {
-            "FEISHU__API_BASE_URL": "http://127.0.0.1:8001",
-        },
-        clear=False,
-    )
-    @patch("mortyclaw.core.tools.web_tools.request.urlopen")
-    def test_arxiv_rag_ask_success(self, mock_urlopen):
-        """测试 arxiv_rag 直通问答工具"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "query": "什么是 Transformer？",
-            "session_id": "mortyclaw_default",
-            "answer": "Transformer 是一种基于自注意力机制的神经网络架构。",
-        }).encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        result = arxiv_rag_ask.invoke({"query": "什么是 Transformer？"})
-        payload = json.loads(result)
-        request_obj = mock_urlopen.call_args.args[0]
-        request_payload = json.loads(request_obj.data.decode("utf-8"))
-
-        self.assertTrue(payload[MORTYCLAW_PASSTHROUGH_FLAG])
-        self.assertEqual(payload["display_text"], "Transformer 是一种基于自注意力机制的神经网络架构。")
-        self.assertEqual(payload["endpoint_path"], "/api/v1/feishu/reply")
-        self.assertEqual(payload["session_id"], "mortyclaw_default")
-        self.assertEqual(request_obj.full_url, "http://127.0.0.1:8001/api/v1/feishu/reply")
-        self.assertEqual(request_payload["query"], "什么是 Transformer？")
-        self.assertEqual(request_payload["session_id"], "mortyclaw_default")
-
-    @patch.dict(
-        os.environ,
-        {
-            "FEISHU__API_BASE_URL": "http://127.0.0.1:8001",
-        },
-        clear=False,
-    )
-    @patch("mortyclaw.core.tools.web_tools.request.urlopen")
-    def test_arxiv_rag_ask_preserves_original_query_text(self, mock_urlopen):
-        """测试 arxiv_rag 工具会原样转发用户 query"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "query": "  推荐一篇无人机论文  ",
-            "session_id": "thread-keep-raw",
-            "answer": "原样返回答案",
-        }).encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        original_query = "  推荐一篇无人机论文  "
-        result = arxiv_rag_ask.invoke({"query": original_query, "session_id": "thread-keep-raw"})
-        payload = json.loads(result)
-        request_obj = mock_urlopen.call_args.args[0]
-        request_payload = json.loads(request_obj.data.decode("utf-8"))
-
-        self.assertEqual(request_payload["query"], original_query)
-        self.assertEqual(request_payload["session_id"], "thread-keep-raw")
-        self.assertEqual(payload["query"], original_query)
-        self.assertEqual(payload["session_id"], "thread-keep-raw")
-
-    @patch.dict(
-        os.environ,
-        {
-            "FEISHU__API_BASE_URL": "http://127.0.0.1:8001",
-        },
-        clear=False,
-    )
-    @patch("mortyclaw.core.tools.web_tools.request.urlopen")
-    def test_arxiv_rag_ask_uses_explicit_session_id(self, mock_urlopen):
-        """测试 arxiv_rag 工具会传递显式 session_id"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "query": "解释这篇论文",
-            "session_id": "thread-explicit",
-            "answer": "这是论文范围内的直接回答。",
-        }).encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        result = arxiv_rag_ask.invoke({
-            "query": "解释这篇论文",
-            "session_id": "thread-explicit",
-        })
-        payload = json.loads(result)
-        request_obj = mock_urlopen.call_args.args[0]
-        request_payload = json.loads(request_obj.data.decode("utf-8"))
-
-        self.assertEqual(payload["endpoint_path"], "/api/v1/feishu/reply")
-        self.assertEqual(payload["session_id"], "thread-explicit")
-        self.assertEqual(request_obj.full_url, "http://127.0.0.1:8001/api/v1/feishu/reply")
-        self.assertEqual(request_payload["session_id"], "thread-explicit")
-
-    @patch.dict(
-        os.environ,
-        {
-            "FEISHU__API_BASE_URL": "http://127.0.0.1:8001",
-            "ARXIV_RAG_FEISHU_REPLY_PATH": "/api/v1/custom-feishu-reply",
-        },
-        clear=False,
-    )
-    @patch("mortyclaw.core.tools.web_tools.request.urlopen")
-    def test_arxiv_rag_ask_supports_custom_feishu_endpoint_path(self, mock_urlopen):
-        """测试可以覆盖本地 Feishu endpoint path"""
-        mock_response = MagicMock()
-        mock_response.read.return_value = json.dumps({
-            "query": "请对比两篇 UAV 论文的优缺点，并分析为什么一个更适合低空巡检。",
-            "session_id": "mortyclaw_default",
-            "answer": "这是复杂问题的回答。",
-        }).encode("utf-8")
-        mock_urlopen.return_value.__enter__.return_value = mock_response
-
-        result = arxiv_rag_ask.invoke({
-            "query": "请对比两篇 UAV 论文的优缺点，并分析为什么一个更适合低空巡检。"
-        })
-        payload = json.loads(result)
-        request_obj = mock_urlopen.call_args.args[0]
-
-        self.assertEqual(payload["endpoint_path"], "/api/v1/custom-feishu-reply")
-        self.assertEqual(request_obj.full_url, "http://127.0.0.1:8001/api/v1/custom-feishu-reply")
-
-    def test_arxiv_rag_ask_registered_in_builtin_tools(self):
-        """测试 arxiv_rag 工具已加入内置工具集"""
-        from mortyclaw.core.tools.builtins import BUILTIN_TOOLS
-
-        self.assertIn(arxiv_rag_ask, BUILTIN_TOOLS)
-
 
 class TestScheduledTasks(unittest.TestCase):
 

@@ -20,7 +20,6 @@ SAFE_READONLY_TOOL_NAMES = {
     "list_office_files",
     "read_office_file",
     "tavily_web_search",
-    "arxiv_rag_ask",
     "calculator",
     "get_current_time",
     "get_system_model_info",
@@ -41,9 +40,7 @@ OFFICE_READONLY_TOOL_NAMES = {
     "read_office_file",
 }
 
-PAPER_RESEARCH_TOOL_NAMES = {
-    "arxiv_rag_ask",
-}
+PAPER_RESEARCH_TOOL_NAMES: set[str] = set()
 PROGRAMMATIC_TOOL_NAMES = {
     "execute_tool_program",
     "read_project_file",
@@ -170,8 +167,10 @@ def select_tools_for_current_step(
             allowed_tools.append(tool)
             continue
 
-        if str(tool_name).startswith("feishu_"):
+        if str(tool_name).startswith(("feishu_", "zotero_", "arxiv_")):
             meta = get_tool_meta(tool)
+            if step_intent == "paper_research" and not str(tool_name).startswith(("arxiv_", "zotero_")):
+                continue
             if step_intent in {"analyze", "read", "summarize", "report"}:
                 if meta.risk_level == "low" and not meta.requires_approval:
                     allowed_tools.append(tool)
@@ -180,7 +179,7 @@ def select_tools_for_current_step(
             continue
 
         if step_intent == "paper_research":
-            if tool_name in PAPER_RESEARCH_TOOL_NAMES:
+            if str(tool_name).startswith(("arxiv_", "zotero_")) or tool_name in PAPER_RESEARCH_TOOL_NAMES:
                 allowed_tools.append(tool)
             continue
 
