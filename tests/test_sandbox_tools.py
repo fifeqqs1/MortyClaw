@@ -74,7 +74,7 @@ class TestSandboxTools(unittest.TestCase):
 
     def test_list_office_files_absolute_dir_readonly(self):
         """测试可只读列出 office 外的绝对路径目录"""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(dir=os.path.dirname(OFFICE_DIR)) as temp_dir:
             open(os.path.join(temp_dir, "a.txt"), "w", encoding="utf-8").close()
             os.makedirs(os.path.join(temp_dir, "nested"), exist_ok=True)
 
@@ -85,7 +85,7 @@ class TestSandboxTools(unittest.TestCase):
 
     def test_list_office_files_relative_traversal_readonly(self):
         """测试可只读列出相对路径解析到 office 外的目录"""
-        with tempfile.TemporaryDirectory() as temp_dir:
+        with tempfile.TemporaryDirectory(dir=os.path.dirname(OFFICE_DIR)) as temp_dir:
             os.makedirs(os.path.join(temp_dir, "visible"), exist_ok=True)
             relative_path = os.path.relpath(temp_dir, OFFICE_DIR)
 
@@ -95,7 +95,9 @@ class TestSandboxTools(unittest.TestCase):
 
     def test_read_office_file_absolute_path_readonly(self):
         """测试可只读读取 office 外的绝对路径文件"""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, encoding="utf-8", dir=os.path.dirname(OFFICE_DIR)
+        ) as temp_file:
             temp_file.write("outside office content")
             temp_path = temp_file.name
 
@@ -108,7 +110,9 @@ class TestSandboxTools(unittest.TestCase):
 
     def test_read_office_file_relative_traversal_readonly(self):
         """测试可只读读取相对路径解析到 office 外的文件"""
-        with tempfile.NamedTemporaryFile(mode="w", delete=False, encoding="utf-8") as temp_file:
+        with tempfile.NamedTemporaryFile(
+            mode="w", delete=False, encoding="utf-8", dir=os.path.dirname(OFFICE_DIR)
+        ) as temp_file:
             temp_file.write("outside office relative content")
             temp_path = temp_file.name
 

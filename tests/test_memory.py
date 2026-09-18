@@ -4,10 +4,10 @@ import sys
 import tempfile
 import time
 import unittest
+from contextlib import closing
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from mortyclaw.core.context import build_working_memory_snapshot
 from mortyclaw.core.memory import (
     DEFAULT_LONG_TERM_SCOPE,
     USER_PROFILE_MEMORY_ID,
@@ -28,48 +28,6 @@ from mortyclaw.core.memory_policy import (
     extract_primary_path,
     sync_session_memory_from_query,
 )
-
-
-class TestWorkingMemorySnapshot(unittest.TestCase):
-
-    def test_build_working_memory_snapshot_uses_runtime_fields(self):
-        snapshot = build_working_memory_snapshot({
-            "goal": "完成任务",
-            "plan": [{"step": 1, "description": "创建文件"}],
-            "current_step_index": 0,
-            "pending_approval": True,
-            "approval_reason": "将要覆盖文件",
-            "step_results": [
-                {"step": 1, "result_summary": "已读取目录"},
-                {"step": 2, "result_summary": "已写入文件"},
-            ],
-            "last_error": "shell timeout",
-            "current_project_path": "/tmp/demo",
-            "route": "slow",
-            "run_status": "awaiting_step_approval",
-        })
-
-        self.assertEqual(snapshot["goal"], "完成任务")
-        self.assertEqual(snapshot["plan"][0]["description"], "创建文件")
-        self.assertTrue(snapshot["pending_approval"])
-        self.assertEqual(snapshot["approval_reason"], "将要覆盖文件")
-        self.assertEqual(len(snapshot["recent_tool_results"]), 2)
-        self.assertEqual(snapshot["last_error"], "shell timeout")
-        self.assertEqual(snapshot["current_project_path"], "/tmp/demo")
-        self.assertEqual(snapshot["current_mode"], "slow")
-        self.assertEqual(snapshot["run_status"], "awaiting_step_approval")
-
-    def test_build_working_memory_snapshot_limits_recent_results(self):
-        snapshot = build_working_memory_snapshot({
-            "step_results": [
-                {"step": 1},
-                {"step": 2},
-                {"step": 3},
-                {"step": 4},
-            ]
-        }, recent_tool_results_limit=2)
-
-        self.assertEqual(snapshot["recent_tool_results"], [{"step": 3}, {"step": 4}])
 
 
 class TestSessionPathExtraction(unittest.TestCase):
@@ -212,7 +170,7 @@ class TestMemoryStore(unittest.TestCase):
             db_path = os.path.join(temp_dir, "memory.sqlite3")
             MemoryStore(db_path=db_path)
 
-            with sqlite3.connect(db_path) as conn:
+            with closing(sqlite3.connect(db_path)) as conn:
                 rows = conn.execute(
                     """
                     SELECT name

@@ -94,6 +94,8 @@ def _looks_like_safe_script_execution(argv: list[str]) -> bool:
         return False
 
     executable = os.path.basename(str(argv[0]).strip()).lower()
+    if executable == "python.exe":
+        executable = "python"
     if executable not in {"python", "python3", "python3.12"}:
         return False
 
@@ -122,7 +124,7 @@ def _validate_safe_project_command(command: str) -> list[str]:
     if re.search(r"[;&|><`$()]", normalized):
         raise PermissionError("run_project_command 仅允许白名单命令，禁止 shell 拼接、重定向、管道或命令替换。")
 
-    argv = shlex.split(normalized, posix=True)
+    argv = shlex.split(normalized, posix=os.name != "nt")
     if not argv:
         raise PermissionError("run_project_command 未解析到有效命令。")
 
@@ -130,6 +132,8 @@ def _validate_safe_project_command(command: str) -> list[str]:
     normalized_for_match = list(lowered)
     if normalized_for_match:
         normalized_for_match[0] = os.path.basename(normalized_for_match[0])
+        if normalized_for_match[0] == "python.exe":
+            normalized_for_match[0] = "python"
     if any(token in {"rm", "mv", "sudo", "bash", "sh", "zsh", "fish"} for token in lowered):
         raise PermissionError("run_project_command 禁止原始 shell 或破坏性系统命令。")
 

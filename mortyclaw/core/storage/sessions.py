@@ -154,28 +154,6 @@ class SessionRepository:
             lineage_root_thread_id=session["lineage_root_thread_id"],
         )
 
-    def get_session_todo_state(self, thread_id: str) -> dict[str, Any]:
-        metadata = self.get_session_metadata(thread_id)
-        todo_state = metadata.get("todo_state")
-        return todo_state if isinstance(todo_state, dict) else {}
-
-    def save_session_todo_state(self, thread_id: str, todo_state: dict[str, Any]) -> SessionRecord:
-        session = self.get_session(thread_id)
-        if session is None:
-            session = self.upsert_session(thread_id=thread_id, display_name=thread_id)
-        metadata = safe_json_loads(session.get("metadata_json"))
-        metadata["todo_state"] = todo_state if isinstance(todo_state, dict) else {}
-        return self.update_session_metadata(thread_id, metadata) or session
-
-    def clear_session_todo_state(self, thread_id: str) -> SessionRecord | None:
-        session = self.get_session(thread_id)
-        if session is None:
-            return None
-        metadata = safe_json_loads(session.get("metadata_json"))
-        if "todo_state" in metadata:
-            metadata.pop("todo_state", None)
-        return self.update_session_metadata(thread_id, metadata)
-
     def list_sessions(
         self,
         *,

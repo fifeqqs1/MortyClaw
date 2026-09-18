@@ -4,13 +4,6 @@ from unittest.mock import patch
 
 from langchain_core.tools import tool
 
-from mortyclaw.core.agent.tool_policy import (
-    destructive_tool_calls,
-    retain_safe_requested_deferred_tools,
-    select_tools_for_autonomous_slow,
-    select_tools_for_fast_route,
-)
-from mortyclaw.core.planning.tool_scope import select_tools_for_current_step
 from mortyclaw.core.integrations.feishu_mcp import (
     FeishuMCPSettings,
     _feishu_tool_meta,
@@ -93,59 +86,6 @@ class TestFeishuMCP(unittest.TestCase):
         self.assertEqual(get_node_meta.risk_level, "low")
 
         write_tool = attach_tool_meta(feishu_message_create, write_meta)
-        calls = [{"name": write_tool.name, "args": {"content": "hello"}}]
-        self.assertEqual(destructive_tool_calls(calls), calls)
-
-    def test_feishu_tools_are_selected_only_for_feishu_requests(self):
-        read_tool = attach_tool_meta(feishu_message_list, _feishu_tool_meta(feishu_message_list))
-        write_tool = attach_tool_meta(feishu_message_create, _feishu_tool_meta(feishu_message_create))
-        all_tools = [fake_calculator, read_tool, write_tool]
-
-        fast_tools = select_tools_for_fast_route(
-            {},
-            all_tools,
-            latest_user_query="帮我读取飞书消息",
-        )
-        self.assertIn("feishu_im_v1_message_list", {item.name for item in fast_tools})
-        self.assertNotIn("feishu_im_v1_message_create", {item.name for item in fast_tools})
-
-        slow_tools = select_tools_for_autonomous_slow(
-            {"goal": "在飞书发送一条消息"},
-            all_tools,
-            latest_user_query="在飞书发送一条消息",
-        )
-        self.assertIn("feishu_im_v1_message_create", {item.name for item in slow_tools})
-
-        structured_read_tools = select_tools_for_current_step(
-            {"description": "读取飞书消息", "intent": "read"},
-            [read_tool, write_tool],
-        )
-        self.assertEqual(
-            {item.name for item in structured_read_tools},
-            {"feishu_im_v1_message_list"},
-        )
-
-    def test_safe_deferred_feishu_tool_survives_schema_request_turn(self):
-        read_tool = attach_tool_meta(feishu_message_list, _feishu_tool_meta(feishu_message_list))
-        write_tool = attach_tool_meta(feishu_message_create, _feishu_tool_meta(feishu_message_create))
-
-        retained = retain_safe_requested_deferred_tools(
-            [fake_calculator],
-            [fake_calculator, read_tool, write_tool],
-            requested_tool_names={read_tool.name, write_tool.name},
-        )
-
-        retained_names = {item.name for item in retained}
-        self.assertIn(read_tool.name, retained_names)
-        self.assertNotIn(write_tool.name, retained_names)
-
-        slow_retained = retain_safe_requested_deferred_tools(
-            [fake_calculator],
-            [fake_calculator, read_tool, write_tool],
-            requested_tool_names={write_tool.name},
-            allow_approved_feishu_writes=True,
-        )
-        self.assertIn(write_tool.name, {item.name for item in slow_retained})
 
     @patch.dict(os.environ, {"FEISHU_MCP_ENABLED": "0"}, clear=False)
     def test_settings_default_to_disabled(self):

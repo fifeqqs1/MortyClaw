@@ -1,17 +1,16 @@
 from __future__ import annotations
 
-import os
 from datetime import datetime
 
 
 def get_system_model_info_impl() -> str:
-    provider = os.getenv("DEFAULT_PROVIDER", "unknown")
-    model = os.getenv("DEFAULT_MODEL", "unknown")
+    from ...harness.settings import HarnessSettings
 
-    if provider == "unknown" or model == "unknown":
-        return "无法获取当前的系统模型配置，可能是环境变量未正确加载。"
-
-    return f"当前使用的模型提供商(Provider)是: {provider}，具体型号(Model)是: {model}。"
+    settings = HarnessSettings.from_env()
+    return (
+        "当前对话内核是 DeepSeek Harness，"
+        f"提供商是 deepseek-official，模型是 {settings.model}。"
+    )
 
 
 def get_current_time_impl(*, now_fn=datetime.now) -> str:

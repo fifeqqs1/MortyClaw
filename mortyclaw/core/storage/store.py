@@ -7,6 +7,14 @@ import threading
 from ..config import RUNTIME_DB_PATH
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class RuntimeStore:
     def __init__(self, db_path: str = RUNTIME_DB_PATH):
         self.db_path = db_path
@@ -14,7 +22,7 @@ class RuntimeStore:
         self.ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, factory=_ClosingConnection)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA busy_timeout = 5000")
         connection.execute("PRAGMA foreign_keys = ON")
@@ -285,6 +293,70 @@ class RuntimeStore:
                     """
                     CREATE INDEX IF NOT EXISTS idx_tool_program_runs_thread_status_updated
                     ON tool_program_runs(thread_id, status, updated_at DESC)
+                    """
+                )
+                # Harness integration is additive: legacy graph/checkpoint data remains
+                # available for FTS search and audit, while new turns use these tables.
+                conn.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS harness_session_bindings (
+                        thread_id TEXT NOT NULL,
+                        generation INTEGER NOT NULL DEFAULT 0,
+                        harness_session_id TEXT NOT NULL UNIQUE,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL,
+                        PRIMARY KEY (thread_id, generation)
+                    );
+                    CREATE TABLE IF NOT EXISTS harness_session_leases (
+                        harness_session_id TEXT PRIMARY KEY,
+                        owner_id TEXT NOT NULL,
+                        acquired_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS harness_context_tokens (
+                        token_hash TEXT PRIMARY KEY,
+                        thread_id TEXT NOT NULL,
+                        turn_id TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        workspace TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        revoked_at TEXT
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_harness_context_thread_turn
+                    ON harness_context_tokens(thread_id, turn_id);
+                    CREATE TABLE IF NOT EXISTS approval_batches (
+                        batch_id TEXT PRIMARY KEY,
+                        thread_id TEXT NOT NULL,
+                        turn_id TEXT NOT NULL,
+                        source TEXT NOT NULL,
+                        workspace TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        expires_at TEXT NOT NULL,
+                        resolved_at TEXT,
+                        metadata_json TEXT NOT NULL DEFAULT '{}'
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_approval_batches_thread_status
+                    ON approval_batches(thread_id, status, created_at DESC);
+                    CREATE TABLE IF NOT EXISTS approval_operations (
+                        operation_id TEXT PRIMARY KEY,
+                        batch_id TEXT NOT NULL,
+                        ordinal INTEGER NOT NULL,
+                        tool_name TEXT NOT NULL,
+                        arguments_json TEXT NOT NULL,
+                        arguments_fingerprint TEXT NOT NULL,
+                        risk_reason TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        result_json TEXT NOT NULL DEFAULT '{}',
+                        error_type TEXT NOT NULL DEFAULT '',
+                        created_at TEXT NOT NULL,
+                        executed_at TEXT,
+                        UNIQUE(batch_id, arguments_fingerprint),
+                        FOREIGN KEY(batch_id) REFERENCES approval_batches(batch_id)
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_approval_operations_batch_ordinal
+                    ON approval_operations(batch_id, ordinal);
                     """
                 )
                 conn.commit()

@@ -1,0 +1,32 @@
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: ptc-runtime
+  disabled: true
+- id: workflow-ptc
+  disabled: true
+- id: approval
+  disabled: true
+- id: tool-plugin-manager
+  disabled: true
+- id: session-telemetry-otel
+  disabled: true
+- insert:
+    - id: mortyclaw-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: mortyclaw
+        transport: streamable-http
+        url: !!js process.env.MORTYCLAW_GATEWAY_URL
+        headers:
+          Authorization: !!js "'Bearer ' + process.env.MORTYCLAW_GATEWAY_TOKEN"
+        failOnStartupError: true
+        reconnect:
+          enabled: true

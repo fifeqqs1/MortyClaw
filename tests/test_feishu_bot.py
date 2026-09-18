@@ -2,12 +2,9 @@ import os
 import unittest
 from unittest.mock import patch
 
-from langchain_core.messages import AIMessage
-
 from mortyclaw.core.integrations.feishu_bot import (
     FeishuBotSettings,
     build_feishu_channel,
-    extract_agent_reply,
     feishu_thread_id,
     split_feishu_reply,
 )
@@ -67,45 +64,6 @@ class FeishuBotMessageTests(unittest.TestCase):
 
         self.assertEqual("".join(chunks).replace("\n", ""), "第一段内容第二段很长的内容")
         self.assertTrue(all(len(chunk) <= 8 for chunk in chunks))
-
-    def test_extracts_fast_reply(self):
-        reply = extract_agent_reply(
-            "fast_agent",
-            {"messages": [AIMessage(content="你好，我是 MortyClaw。")]},
-        )
-
-        self.assertEqual(reply, "你好，我是 MortyClaw。")
-
-    def test_ignores_slow_intermediate_step(self):
-        reply = extract_agent_reply(
-            "slow_agent",
-            {
-                "messages": [
-                    AIMessage(
-                        content="中间分析",
-                        additional_kwargs={"mortyclaw_response_kind": "step_result"},
-                    )
-                ]
-            },
-        )
-
-        self.assertEqual(reply, "")
-
-    def test_extracts_approval_prompt_for_chat_confirmation(self):
-        reply = extract_agent_reply(
-            "approval_gate",
-            {
-                "messages": [
-                    AIMessage(
-                        content="这项飞书写入需要确认，请回复确认。",
-                        additional_kwargs={"mortyclaw_response_kind": "final_answer"},
-                    )
-                ]
-            },
-        )
-
-        self.assertIn("回复确认", reply)
-
 
 if __name__ == "__main__":
     unittest.main()

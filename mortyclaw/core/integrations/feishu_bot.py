@@ -2,21 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import uuid
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import HumanMessage
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-from ..config import DB_PATH
-from ..logger import build_log_file_path
-from ..observability.maintenance import reset_thread_state
-from ..runtime.tool_results import prepare_tool_messages_for_budget
-from ..runtime_context import set_active_thread_id
-from ..storage.runtime import get_conversation_writer, get_session_repository
+from ..config import PROJECT_ROOT
+from ..harness import AgentTurnRequest, HarnessRuntime
+from ..storage.runtime import get_session_repository
 
 
 logger = logging.getLogger(__name__)
@@ -90,87 +85,23 @@ def split_feishu_reply(text: str, max_chars: int = 3500) -> list[str]:
     return chunks
 
 
-def _message_response_kind(message: Any) -> str:
-    kwargs = getattr(message, "additional_kwargs", {}) or {}
-    if not isinstance(kwargs, dict):
-        return ""
-    return str(kwargs.get("mortyclaw_response_kind", "") or "").strip().lower()
-
-
-def _message_text(message: Any) -> str:
-    content = getattr(message, "content", "")
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
-        return "\n".join(part for part in parts if part).strip()
-    return str(content or "").strip()
-
-
-def extract_agent_reply(node_name: str, node_data: Any) -> str:
-    """Extract only user-facing replies from one LangGraph update event."""
-    if not isinstance(node_data, dict):
-        return ""
-    explicit = str(node_data.get("final_answer", "") or "").strip()
-    if explicit:
-        return explicit
-    messages = node_data.get("messages")
-    if not isinstance(messages, list) or not messages:
-        return ""
-    message = messages[-1]
-    if getattr(message, "tool_calls", None):
-        return ""
-    kind = _message_response_kind(message)
-    if node_name == "slow_agent" and kind != "final_answer":
-        return ""
-    if node_name not in {"fast_agent", "approval_gate", "finalizer", "slow_agent"} and kind != "final_answer":
-        return ""
-    return _message_text(message)
-
-
 class MortyClawFeishuRuntime:
-    """Own MortyClaw's graph and translate Feishu messages into graph turns."""
+    """Translate Feishu messages into DeepSeek Harness turns."""
 
-    def __init__(self, *, provider: str, model: str, db_path: str = DB_PATH) -> None:
-        self.provider = provider
-        self.model = model
-        self.db_path = db_path
-        self._memory_cm: Any = None
-        self._memory: Any = None
-        self._app: Any = None
-        self._init_lock = asyncio.Lock()
+    def __init__(self) -> None:
+        self._runtime = HarnessRuntime()
+        self._started = False
         self._chat_locks: dict[str, asyncio.Lock] = {}
-        self._session_repository = get_session_repository()
-        self._conversation_writer = get_conversation_writer()
 
     async def start(self) -> None:
-        if self._app is not None:
+        if self._started:
             return
-        async with self._init_lock:
-            if self._app is not None:
-                return
-            self._memory_cm = AsyncSqliteSaver.from_conn_string(self.db_path)
-            self._memory = await self._memory_cm.__aenter__()
-            from ..agent import create_agent_app
-
-            self._app = create_agent_app(
-                provider_name=self.provider,
-                model_name=self.model,
-                checkpointer=self._memory,
-            )
+        await self._runtime.start()
+        self._started = True
 
     async def close(self) -> None:
-        self._conversation_writer.flush()
-        if self._memory_cm is not None:
-            await self._memory_cm.__aexit__(None, None, None)
-        self._memory_cm = None
-        self._memory = None
-        self._app = None
+        await self._runtime.close()
+        self._started = False
 
     async def handle_text(self, *, chat_id: str, text: str) -> str:
         await self.start()
@@ -178,68 +109,42 @@ class MortyClawFeishuRuntime:
         thread_id = feishu_thread_id(chat_id)
         lock = self._chat_locks.setdefault(thread_id, asyncio.Lock())
         async with lock:
+            notices = self._drain_inbox(thread_id)
             if normalized.lower() in {"/help", "帮助"}:
-                return (
+                reply = (
                     "我是 MortyClaw。直接发送问题即可继续对话；发送 /reset 可清空当前飞书会话的上下文。"
                 )
+                return "\n\n".join([*notices, reply])
             if normalized.lower() in {"/reset", "/new"}:
-                await asyncio.to_thread(reset_thread_state, thread_id=thread_id, state_db_path=self.db_path)
-                self._session_repository.clear_session_todo_state(thread_id)
-                return "当前飞书会话的上下文已清空，我们可以重新开始。"
+                await self._runtime.reset(thread_id)
+                return "\n\n".join([*notices, "当前飞书会话的上下文已清空，我们可以重新开始。"])
             if not normalized:
-                return "我在。请直接告诉我你需要处理什么。"
-            return await self._run_turn(thread_id=thread_id, user_input=normalized)
+                return "\n\n".join([*notices, "我在。请直接告诉我你需要处理什么。"])
+            reply = await self._run_turn(thread_id=thread_id, user_input=normalized)
+            return "\n\n".join([*notices, reply])
+
+    @staticmethod
+    def _drain_inbox(thread_id: str) -> list[str]:
+        repository = get_session_repository()
+        notices: list[str] = []
+        for event in repository.list_pending_inbox_events(thread_id, limit=20):
+            try:
+                payload = json.loads(event.get("payload") or "{}")
+            except (TypeError, json.JSONDecodeError):
+                payload = {}
+            content = str(payload.get("content") or "").strip()
+            if content:
+                notices.append(f"【定时任务通知】\n{content}")
+            repository.mark_inbox_event_delivered(event["event_id"])
+        return notices
 
     async def _run_turn(self, *, thread_id: str, user_input: str) -> str:
-        assert self._app is not None
         turn_id = str(uuid.uuid4())
-        user_message = HumanMessage(content=user_input, id=f"{turn_id}:user")
-        set_active_thread_id(thread_id)
-        self._session_repository.upsert_session(
-            thread_id=thread_id,
-            display_name=f"飞书会话 {thread_id[-8:]}",
-            provider=self.provider,
-            model=self.model,
-            status="active",
-            log_file=build_log_file_path(thread_id),
-            metadata={"source": "feishu_bot"},
-        )
-        self._conversation_writer.append_messages(
-            thread_id=thread_id,
-            turn_id=turn_id,
-            messages=[user_message],
-            node_name="feishu_input",
-            route="input",
-        )
-        final_reply = ""
-        config = {"configurable": {"thread_id": thread_id, "turn_id": turn_id}}
-        try:
-            async for event in self._app.astream(
-                {"messages": [user_message]},
-                config=config,
-                stream_mode="updates",
-            ):
-                for node_name, node_data in event.items():
-                    node_messages = node_data.get("messages") if isinstance(node_data, dict) else None
-                    if isinstance(node_messages, list) and node_messages:
-                        stored_messages = prepare_tool_messages_for_budget(
-                            node_messages,
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                        )
-                        self._conversation_writer.append_messages(
-                            thread_id=thread_id,
-                            turn_id=turn_id,
-                            messages=stored_messages,
-                            node_name=node_name,
-                            route=str(node_data.get("route", "")),
-                        )
-                    candidate = extract_agent_reply(node_name, node_data)
-                    if candidate:
-                        final_reply = candidate
-            return final_reply or "这次处理已经结束，但模型没有生成可发送的文本结果。"
-        finally:
-            self._session_repository.touch_session(thread_id, status="idle")
+        result = await self._runtime.run_turn(AgentTurnRequest(
+            thread_id=thread_id, turn_id=turn_id, text=user_input,
+            source="feishu", workspace=PROJECT_ROOT,
+        ))
+        return result.final_response
 
 
 def build_feishu_channel(settings: FeishuBotSettings):
@@ -309,15 +214,13 @@ def _install_ws_thread_loop_compat(channel: Any) -> None:
 
 async def serve_feishu_bot(
     *,
-    provider: str,
-    model: str,
     settings: FeishuBotSettings | None = None,
     ready_callback=None,
 ) -> None:
     resolved = settings or FeishuBotSettings.from_env()
     resolved.validate()
     channel = build_feishu_channel(resolved)
-    runtime = MortyClawFeishuRuntime(provider=provider, model=model)
+    runtime = MortyClawFeishuRuntime()
 
     async def on_message(message) -> None:
         chat_id = str(getattr(message, "chat_id", "") or "").strip()
@@ -390,7 +293,6 @@ __all__ = [
     "FeishuBotSettings",
     "MortyClawFeishuRuntime",
     "build_feishu_channel",
-    "extract_agent_reply",
     "feishu_thread_id",
     "serve_feishu_bot",
     "split_feishu_reply",

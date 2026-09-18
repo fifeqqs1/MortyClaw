@@ -219,8 +219,11 @@ def _search_text(project_root: str, query: str, file_glob: str, max_results: int
             command.extend(["--glob", f"!{excluded}/**"])
         if file_glob:
             command.extend(["--glob", file_glob])
-        command.extend(["--", query, project_root])
-        result = subprocess.run(command, capture_output=True, encoding="utf-8", errors="replace", timeout=30)
+        command.extend(["--", query, "."])
+        result = subprocess.run(
+            command, cwd=project_root, capture_output=True,
+            encoding="utf-8", errors="replace", timeout=30,
+        )
         if result.returncode not in {0, 1}:
             return f"rg 搜索失败：{result.stderr.strip() or result.stdout.strip()}"
         lines = []
@@ -228,7 +231,7 @@ def _search_text(project_root: str, query: str, file_glob: str, max_results: int
             parts = raw_line.split(":", 3)
             if len(parts) == 4:
                 path_part, line_no, column, text = parts
-                rel = _relative_path(project_root, path_part)
+                rel = path_part.replace("\\", "/").removeprefix("./")
                 lines.append(f"{rel}:{line_no}:{column}: {text}")
             else:
                 lines.append(raw_line)

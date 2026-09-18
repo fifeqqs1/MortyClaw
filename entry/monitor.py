@@ -13,7 +13,6 @@ from rich.theme import Theme
 from mortyclaw.core.logger import build_log_file_path
 from mortyclaw.core.storage.runtime import (
     get_session_repository,
-    get_tool_program_run_repository,
     get_worker_run_repository,
 )
 
@@ -156,14 +155,10 @@ def render_event(line: str):
             action = data.get("content", "")
             console.print(f"{prefix}[warning]✦ 底层状态机：{action}[/warning]")
 
-        elif event in {"worker_spawned", "worker_wait", "worker_completed", "worker_failed"}:
+        elif event in {"subagent_started", "subagent_finished"}:
             worker_id = data.get("worker_id", "")
             content = data.get("content", "") or event
-            console.print(f"{prefix}[warning]✦ Worker 事件：{worker_id or '-'} | {content}[/warning]")
-
-        elif event in {"program_run_started", "program_run_paused_for_approval", "program_run_resumed", "program_run_completed", "program_run_failed"}:
-            content = data.get("content", "") or event
-            console.print(f"{prefix}[info]✦ Program Run：{content}[/info]")
+            console.print(f"{prefix}[warning]✦ Harness 子 Agent：{worker_id or '-'} | {content}[/warning]")
 
         elif event in {"lock_wait_started", "lock_wait_finished"}:
             content = data.get("content", "") or event
@@ -174,24 +169,15 @@ def render_event(line: str):
 
 def print_runtime_activity(thread_id: str) -> None:
     workers = get_worker_run_repository().list_worker_runs(parent_thread_id=thread_id, limit=8)
-    program_runs = get_tool_program_run_repository().list_program_runs(thread_id=thread_id, limit=6)
-    if not workers and not program_runs:
+    if not workers:
         return
 
-    lines: list[str] = []
-    if workers:
-        lines.append("[bold white]Workers[/bold white]")
-        for item in workers[:6]:
-            lines.append(
-                f"- {item['worker_id'][:8]} role={item.get('role','')} status={item.get('status','')}"
-                f" thread={item.get('worker_thread_id','')}"
-            )
-    if program_runs:
-        lines.append("[bold white]Program Runs[/bold white]")
-        for item in program_runs[:4]:
-            lines.append(
-                f"- {item['program_run_id'][:8]} status={item.get('status','')} pc={item.get('pc', 0)}"
-            )
+    lines: list[str] = ["[bold white]Harness Subagents[/bold white]"]
+    for item in workers[:6]:
+        lines.append(
+            f"- {item['worker_id'][:8]} role={item.get('role','')} status={item.get('status','')}"
+            f" session={item.get('worker_thread_id','')}"
+        )
     console.print(Panel("\n".join(lines), title="✦ Runtime Activity", title_align="left", border_style="color(141)", width=72))
 
 

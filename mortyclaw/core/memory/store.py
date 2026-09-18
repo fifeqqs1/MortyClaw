@@ -20,6 +20,14 @@ _default_async_writer: "AsyncMemoryWriter | None" = None
 _default_async_writer_lock = threading.Lock()
 
 
+class _ClosingConnection(sqlite3.Connection):
+    def __exit__(self, exc_type, exc_value, traceback):
+        try:
+            return super().__exit__(exc_type, exc_value, traceback)
+        finally:
+            self.close()
+
+
 class MemoryRecord(TypedDict):
     memory_id: str
     layer: MemoryLayer
@@ -81,7 +89,7 @@ class MemoryStore:
         self.ensure_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.db_path)
+        connection = sqlite3.connect(self.db_path, factory=_ClosingConnection)
         connection.row_factory = sqlite3.Row
         return connection
 

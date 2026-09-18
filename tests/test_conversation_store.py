@@ -4,6 +4,7 @@ import tempfile
 import time
 import unittest
 import json
+from contextlib import closing
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -13,17 +14,6 @@ from mortyclaw.core.runtime_store import (
     get_session_repository,
 )
 from mortyclaw.core.tools.builtins.sessions import search_sessions_impl
-
-
-class FakeSummaryLLM:
-    def invoke(self, messages, config=None):
-        return type("Response", (), {"content": "摘要：历史会话中运行了 pytest，并确认工具结果通过。"})()
-
-
-class SlowSummaryLLM:
-    def invoke(self, messages, config=None):
-        time.sleep(2)
-        return type("Response", (), {"content": "late"})()
 
 
 class ConversationStoreTests(unittest.TestCase):
@@ -38,7 +28,7 @@ class ConversationStoreTests(unittest.TestCase):
 
     def test_schema_migrates_old_sessions_table_without_losing_rows(self):
         legacy_db = os.path.join(self.temp_dir.name, "legacy.sqlite3")
-        with sqlite3.connect(legacy_db) as conn:
+        with closing(sqlite3.connect(legacy_db)) as conn:
             conn.execute(
                 """
                 CREATE TABLE sessions (
@@ -160,86 +150,10 @@ class ConversationStoreTests(unittest.TestCase):
             include_tool_results=True,
             current_thread_id="current",
             get_conversation_repository_fn=lambda: self.repo,
-            summarize=False,
         ))
 
         self.assertTrue(payload["success"])
-        self.assertFalse(payload["summarize"])
         self.assertIn("hits", payload["results"][0])
-        self.assertNotIn("summary_status", payload["results"][0])
-
-    def test_search_sessions_tool_summarizes_with_injected_llm(self):
-        self.repo.append_messages(
-            thread_id="summary-thread",
-            turn_id="turn-summary",
-            messages=[HumanMessage(content="以前用 pytest 检查 runtime 工具结果", id="msg-summary")],
-        )
-
-        payload = json.loads(search_sessions_impl(
-            query="pytest runtime",
-            role_filter="",
-            limit=3,
-            include_current=True,
-            include_tool_results=True,
-            current_thread_id="current",
-            get_conversation_repository_fn=lambda: self.repo,
-            summarize=True,
-            summary_timeout_seconds=5,
-            llm_factory=lambda: FakeSummaryLLM(),
-        ))
-
-        self.assertTrue(payload["success"])
-        self.assertTrue(payload["summarize"])
-        self.assertEqual(payload["results"][0]["summary_status"], "generated")
-        self.assertIn("pytest", payload["results"][0]["summary"])
-        self.assertIn("raw_hits", payload["results"][0])
-
-    def test_search_sessions_tool_falls_back_without_llm(self):
-        self.repo.append_messages(
-            thread_id="fallback-thread",
-            turn_id="turn-fallback",
-            messages=[HumanMessage(content="以前修过 session_search 的 fallback", id="msg-fallback")],
-        )
-
-        payload = json.loads(search_sessions_impl(
-            query="session_search fallback",
-            role_filter="",
-            limit=3,
-            include_current=True,
-            include_tool_results=True,
-            current_thread_id="current",
-            get_conversation_repository_fn=lambda: self.repo,
-            summarize=True,
-            llm_factory=None,
-        ))
-
-        self.assertEqual(payload["results"][0]["summary_status"], "fallback_raw")
-        self.assertIn("原始命中预览", payload["results"][0]["summary"])
-
-    def test_search_sessions_summary_timeout_returns_fallback(self):
-        self.repo.append_messages(
-            thread_id="timeout-thread",
-            turn_id="turn-timeout",
-            messages=[HumanMessage(content="以前修过 session_search timeout", id="msg-timeout")],
-        )
-        start = time.perf_counter()
-
-        payload = json.loads(search_sessions_impl(
-            query="session_search timeout",
-            role_filter="",
-            limit=3,
-            include_current=True,
-            include_tool_results=True,
-            current_thread_id="current",
-            get_conversation_repository_fn=lambda: self.repo,
-            summarize=True,
-            summary_timeout_seconds=1,
-            llm_factory=lambda: SlowSummaryLLM(),
-        ))
-        elapsed = time.perf_counter() - start
-
-        self.assertLess(elapsed, 1.8)
-        self.assertEqual(payload["results"][0]["summary_status"], "timeout")
 
     def test_branch_metadata_and_compression_summary_are_persisted(self):
         self.session_repo.upsert_session(thread_id="parent-thread", display_name="parent-thread")
@@ -271,27 +185,6 @@ class ConversationStoreTests(unittest.TestCase):
 
         self.assertLess(elapsed, 0.05)
         self.assertEqual(len(self.repo.get_session_conversation("async-thread")), 1)
-
-    def test_session_todo_state_can_be_saved_loaded_and_cleared(self):
-        self.session_repo.upsert_session(thread_id="todo-thread", display_name="todo-thread")
-        saved = self.session_repo.save_session_todo_state(
-            "todo-thread",
-            {
-                "items": [{"id": "step-1", "content": "检查入口", "status": "in_progress"}],
-                "revision": 2,
-                "updated_at": "now",
-                "last_event": "planned",
-            },
-        )
-
-        loaded = self.session_repo.get_session_todo_state("todo-thread")
-        cleared = self.session_repo.clear_session_todo_state("todo-thread")
-
-        self.assertEqual(saved["thread_id"], "todo-thread")
-        self.assertEqual(loaded["revision"], 2)
-        self.assertEqual(loaded["items"][0]["content"], "检查入口")
-        self.assertEqual(self.session_repo.get_session_todo_state("todo-thread"), {})
-        self.assertEqual(cleared["thread_id"], "todo-thread")
 
     def test_tool_result_metadata_keeps_artifact_reference(self):
         ai_message = AIMessage(
@@ -325,7 +218,7 @@ class ConversationStoreTests(unittest.TestCase):
             node_name="slow_tools",
         )
 
-        with sqlite3.connect(self.db_path) as conn:
+        with closing(sqlite3.connect(self.db_path)) as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
                 "SELECT metadata_json FROM conversation_tool_calls WHERE tool_call_id = ?",

@@ -269,37 +269,10 @@ class TestScheduledTasks(unittest.TestCase):
         """测试获取系统模型信息功能"""
         from mortyclaw.core.tools.builtins import get_system_model_info
 
-        # 保存原有环境变量
-        orig_provider = os.environ.get('DEFAULT_PROVIDER')
-        orig_model = os.environ.get('DEFAULT_MODEL')
-
-        try:
-            # 测试正常情况
-            os.environ['DEFAULT_PROVIDER'] = 'test_provider'
-            os.environ['DEFAULT_MODEL'] = 'test_model'
-
+        with patch.dict(os.environ, {"MORTYCLAW_HARNESS_MODEL": "deepseek-v4-flash"}, clear=False):
             result = get_system_model_info.invoke({})
-            self.assertIn('test_provider', result)
-            self.assertIn('test_model', result)
-
-            # 测试未知情况
-            os.environ['DEFAULT_PROVIDER'] = 'unknown'
-            os.environ['DEFAULT_MODEL'] = 'unknown'
-
-            result = get_system_model_info.invoke({})
-            self.assertIn("无法获取当前的系统模型配置", result)
-
-        finally:
-            # 恢复环境变量
-            if orig_provider is not None:
-                os.environ['DEFAULT_PROVIDER'] = orig_provider
-            else:
-                os.environ.pop('DEFAULT_PROVIDER', None)
-
-            if orig_model is not None:
-                os.environ['DEFAULT_MODEL'] = orig_model
-            else:
-                os.environ.pop('DEFAULT_MODEL', None)
+        self.assertIn("deepseek-official", result)
+        self.assertIn("deepseek-v4-flash", result)
 
 
 class TestScheduledTasksWithTasks(unittest.TestCase):

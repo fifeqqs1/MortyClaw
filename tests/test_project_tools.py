@@ -20,8 +20,6 @@ from mortyclaw.core.tools.project_tools import (
     write_project_file,
 )
 from mortyclaw.core.tools.builtins import BUILTIN_TOOLS
-from mortyclaw.core.planning import build_execution_plan, select_tools_for_current_step
-from mortyclaw.core.routing import build_route_decision
 
 
 def _write_file(root: str, relative_path: str, content: str) -> None:
@@ -115,128 +113,6 @@ class TestProjectTools(unittest.TestCase):
         self.assertIn("run_project_tests", tool_names)
         self.assertIn("run_project_command", tool_names)
 
-    def test_code_modification_routes_to_slow_path_and_gets_project_tools(self):
-        decision = build_route_decision("请修复这个项目里的训练入口 bug，并运行测试验证")
-        self.assertEqual(decision["route"], "slow")
-        self.assertEqual(decision["risk_level"], "high")
-
-        plan = build_execution_plan(decision["goal"], decision["risk_level"])
-        selected_tools = select_tools_for_current_step(plan[0], BUILTIN_TOOLS)
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("read_project_file", selected_names)
-        self.assertIn("search_project_code", selected_names)
-        self.assertIn("show_git_diff", selected_names)
-        self.assertIn("edit_project_file", selected_names)
-        self.assertIn("write_project_file", selected_names)
-        self.assertIn("apply_project_patch", selected_names)
-        self.assertIn("run_project_tests", selected_names)
-        self.assertIn("run_project_command", selected_names)
-
-    def test_read_only_project_analysis_prefers_project_tools(self):
-        step = {
-            "step": 1,
-            "description": "分析这个项目的训练入口和模块关系",
-            "status": "pending",
-            "risk_level": "low",
-            "intent": "analyze",
-        }
-
-        selected_tools = select_tools_for_current_step(
-            step,
-            BUILTIN_TOOLS,
-            current_project_path=self.root,
-        )
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("read_project_file", selected_names)
-        self.assertIn("search_project_code", selected_names)
-        self.assertIn("show_git_diff", selected_names)
-        self.assertNotIn("read_office_file", selected_names)
-        self.assertNotIn("list_office_files", selected_names)
-
-    def test_read_only_analysis_without_project_path_keeps_office_fallback(self):
-        step = {
-            "step": 1,
-            "description": "分析这个项目的训练入口和模块关系",
-            "status": "pending",
-            "risk_level": "low",
-            "intent": "analyze",
-        }
-
-        selected_tools = select_tools_for_current_step(step, BUILTIN_TOOLS)
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("read_office_file", selected_names)
-        self.assertIn("list_office_files", selected_names)
-
-    def test_file_write_step_with_project_path_exposes_write_project_file(self):
-        step = {
-            "step": 1,
-            "description": "在这个目录下新建一个 Python 文件",
-            "status": "pending",
-            "risk_level": "high",
-            "intent": "file_write",
-        }
-
-        selected_tools = select_tools_for_current_step(
-            step,
-            BUILTIN_TOOLS,
-            current_project_path=self.root,
-        )
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("write_project_file", selected_names)
-
-    def test_file_write_step_without_project_path_exposes_write_office_file(self):
-        step = {
-            "step": 1,
-            "description": "新建一个 Python 文件并写入示例代码",
-            "status": "pending",
-            "risk_level": "high",
-            "intent": "file_write",
-        }
-
-        selected_tools = select_tools_for_current_step(step, BUILTIN_TOOLS)
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("write_office_file", selected_names)
-
-    def test_shell_execute_step_exposes_project_execution_tools(self):
-        step = {
-            "step": 1,
-            "description": "运行 python pkg/model.py 脚本并查看输出",
-            "status": "pending",
-            "risk_level": "high",
-            "intent": "shell_execute",
-        }
-
-        selected_tools = select_tools_for_current_step(
-            step,
-            BUILTIN_TOOLS,
-            current_project_path=self.root,
-        )
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("run_project_command", selected_names)
-
-    def test_test_verify_step_exposes_run_project_tests(self):
-        step = {
-            "step": 1,
-            "description": "验证输出结果并确认通过或失败原因",
-            "status": "pending",
-            "risk_level": "high",
-            "intent": "test_verify",
-        }
-
-        selected_tools = select_tools_for_current_step(
-            step,
-            BUILTIN_TOOLS,
-            current_project_path=self.root,
-        )
-        selected_names = {tool.name for tool in selected_tools}
-
-        self.assertIn("run_project_tests", selected_names)
 
     def test_read_project_file_with_line_numbers_and_boundaries(self):
         result = read_project_file.invoke({

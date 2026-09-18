@@ -118,16 +118,13 @@ def _resolve_npx_command(explicit_command: str = "") -> str:
 
 def build_feishu_mcp_connection(settings: FeishuMCPSettings) -> dict[str, Any]:
     settings.validate()
-    child_env = dict(os.environ)
-    child_env.update(
-        {
-            "APP_ID": settings.app_id,
-            "APP_SECRET": settings.app_secret,
-            "LARK_TOOLS": settings.tools,
-            "LARK_DOMAIN": settings.domain,
-            "LARK_TOKEN_MODE": settings.token_mode,
-        }
-    )
+    child_env = {
+        "APP_ID": settings.app_id,
+        "APP_SECRET": settings.app_secret,
+        "LARK_TOOLS": settings.tools,
+        "LARK_DOMAIN": settings.domain,
+        "LARK_TOKEN_MODE": settings.token_mode,
+    }
     if settings.user_access_token:
         child_env["USER_ACCESS_TOKEN"] = settings.user_access_token
 
@@ -172,14 +169,12 @@ def feishu_tool_meta(tool: BaseTool) -> ToolMeta:
             name=name,
             capabilities={"feishu_read", "external_read"},
             risk_level="low",
-            allowed_routes={"fast", "slow"},
         )
 
     return ToolMeta.build(
         name=name,
         capabilities={"feishu_write", "external_write"},
         risk_level="high",
-        allowed_routes={"slow"},
         requires_approval=True,
     )
 
@@ -211,7 +206,7 @@ def _run_awaitable_blocking(awaitable: Awaitable[_T]) -> _T:
     except RuntimeError:
         return asyncio.run(awaitable)
 
-    # create_agent_app is synchronous and is also called from MortyClaw's async CLI.
+    # MCP discovery is synchronous and may be called from MortyClaw's async entrypoints.
     # Run discovery on an isolated loop so startup remains compatible with both callers.
     with ThreadPoolExecutor(max_workers=1, thread_name_prefix="feishu-mcp-loader") as pool:
         return pool.submit(asyncio.run, awaitable).result()

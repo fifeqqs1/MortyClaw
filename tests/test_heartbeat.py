@@ -7,7 +7,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from mortyclaw.core.heartbeat import process_due_tasks_once
+from mortyclaw.core.heartbeat import process_due_tasks_once, process_due_tasks_with_harness_once
+from mortyclaw.core.harness import AgentTurnResult
 from mortyclaw.core.runtime_store import get_session_repository, get_task_repository
 
 
@@ -142,6 +143,53 @@ class TestRuntimeTaskFlow(unittest.TestCase):
 
         self.assertEqual([task["description"] for task in tasks_a], ["会话 A 的任务"])
         self.assertEqual([task["description"] for task in tasks_b], ["会话 B 的任务"])
+
+
+class TestScheduledHarnessFlow(unittest.IsolatedAsyncioTestCase):
+    async def test_due_task_runs_through_harness_and_delivers_result(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
+            db_path = os.path.join(temp_dir, "runtime.sqlite3")
+            task_repo = get_task_repository(db_path=db_path)
+            session_repo = get_session_repository(db_path=db_path)
+            task = task_repo.create_task(
+                target_time="2026-04-20 12:00:00",
+                description="整理今日论文",
+                repeat=None,
+                repeat_count=None,
+                thread_id="scheduled-thread",
+            )
+
+            class FakeRuntime:
+                def __init__(self):
+                    self.requests = []
+
+                async def start(self):
+                    return None
+
+                async def run_turn(self, request):
+                    self.requests.append(request)
+                    return AgentTurnResult(
+                        session_id="fake-session",
+                        final_response="定时科研任务已完成",
+                        finish_reason="completed",
+                        events=[],
+                    )
+
+            runtime = FakeRuntime()
+            triggered = await process_due_tasks_with_harness_once(
+                now="2026-04-20 12:00:01",
+                task_repository=task_repo,
+                session_repository=session_repo,
+                runtime=runtime,
+            )
+
+            self.assertEqual(len(triggered), 1)
+            self.assertEqual(runtime.requests[0].source, "scheduled")
+            self.assertEqual(task_repo.get_task(task["task_id"])["status"], "completed")
+            event = session_repo.list_pending_inbox_events("scheduled-thread")[0]
+            payload = json.loads(event["payload"])
+            self.assertEqual(event["event_type"], "scheduled_result")
+            self.assertEqual(payload["content"], "定时科研任务已完成")
 
 
 class TestMonitorSessionSelection(unittest.TestCase):

@@ -29,13 +29,8 @@ workspace/state.sqlite3
 *.sqlite3-wal
 workspace/tasks.json
 workspace/runtime/
+workspace/harness-home/
 workspace/
-!workspace/
-workspace/*
-!workspace/office/
-workspace/office/*
-!workspace/office/skills/
-!workspace/office/skills/**
 
 workspace/memory/*.md
 .vscode/

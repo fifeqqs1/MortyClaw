@@ -12,11 +12,6 @@ from dotenv import set_key, load_dotenv, unset_key
 import sys
 import socket
 
-from mortyclaw.core.provider import get_provider
-from mortyclaw.core.provider import (
-    get_compatible_provider_api_key_env_vars,
-    get_compatible_provider_base_url_env_vars,
-)
 from mortyclaw.core.config import TASKS_FILE
 from mortyclaw.core.maintenance import (
     collect_doctor_report,
@@ -29,10 +24,8 @@ from mortyclaw.core.storage.runtime import (
     get_conversation_repository,
     get_session_repository,
     get_task_repository,
-    get_tool_program_run_repository,
     get_worker_run_repository,
 )
-from langchain_core.messages import HumanMessage
 
 ENTRY_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(ENTRY_DIR) 
@@ -45,6 +38,9 @@ if PROJECT_ROOT not in sys.path:
 app = typer.Typer(help="MortyClaw - 极客专属的赛博智能终端")
 gc_app = typer.Typer(help="运行态垃圾回收与归档工具")
 mcp_app = typer.Typer(help="配置、检查和禁用 MCP 服务")
+harness_app = typer.Typer(help="配置和诊断 DeepSeek Harness")
+gateway_app = typer.Typer(help="检查 MortyClaw MCP Gateway")
+approvals_app = typer.Typer(help="查看和处理暂存审批")
 console = Console()
 
 morty_style = questionary.Style([
@@ -61,18 +57,9 @@ ENV_PATH = os.path.join(PROJECT_ROOT, ".env")
 SHORT_SESSION_ID_PATTERN = re.compile(r"^session-(\d{1,5})$")
 app.add_typer(gc_app, name="gc")
 app.add_typer(mcp_app, name="mcp")
-
-
-def _compatible_provider_primary_api_key(provider: str) -> str:
-    return get_compatible_provider_api_key_env_vars(provider)[0]
-
-
-def _compatible_provider_primary_base_key(provider: str) -> str:
-    return get_compatible_provider_base_url_env_vars(provider)[0]
-
-
-def _has_configured_compatible_provider_key(provider: str) -> bool:
-    return any(os.getenv(env_key) for env_key in get_compatible_provider_api_key_env_vars(provider))
+app.add_typer(harness_app, name="harness")
+app.add_typer(gateway_app, name="gateway")
+app.add_typer(approvals_app, name="approvals")
 
 
 def _is_transient_test_thread_id(thread_id: str | None) -> bool:
@@ -218,133 +205,9 @@ def _decode_json_field(raw_value: str, default):
 
 @app.command("config")
 def config_wizard():
-    console.clear()
-    console.print(Panel(
-        "😈 Welcome to [bold #8d52ff]MortyClaw[/bold #8d52ff]...\n\n☁️[dim] 请完成模型配置，我们将把密钥安全固化在本地。[/dim]",
-        title="[bold white]✦  MortyClaw Config[/bold white]",
-        border_style="#8d52ff"
-    ))
-    provider_raw = questionary.select(
-        "选择你的模型提供商 (Provider):",
-        choices=["openai", "anthropic", "aliyun (openai compatible)","tencent (openai compatible)", "z.ai (openai compatible)", "other (openai compatible)", "ollama"],
-        style=morty_style,
-        instruction="(按上下键选择，回车确认)"
-    ).ask()
+    """配置 DeepSeek Harness（第一版仅支持 DeepSeek）。"""
+    configure_harness()
 
-    if not provider_raw:
-        console.print("[dim #8d52ff]✦   录入中断，MortyClaw 配置已取消。[/dim #8d52ff]")
-        return
-
-    provider = provider_raw.split(" ")[0].strip()
-    is_openai_compatible = "openai" in provider_raw.lower()
-
-    model_name = questionary.text(
-        "输入指定的模型型号 (如 gpt-4o-mini, qwen-max, glm-4 等):",
-        style=morty_style
-    ).ask()
-
-    if model_name is None:
-        console.print("[dim #8d52ff]✦   录入中断，MortyClaw 配置已取消。[/dim #8d52ff]")
-        return
-
-    api_key = ""
-    env_key = ""
-    if provider != "ollama":
-        if is_openai_compatible or provider in ["aliyun", "dashscope", "z.ai", "tencent", "other"]:
-            env_key = _compatible_provider_primary_api_key(provider)
-        elif provider == "anthropic":
-            env_key = "ANTHROPIC_API_KEY"
-
-        api_key = questionary.password(
-            f"输入你的 {env_key} (对应 {provider_raw}):",
-            style=morty_style
-        ).ask()
-
-        if api_key is None:
-            console.print("[dim #8d52ff]✦   录入中断，MortyClaw 配置已取消。[/dim #8d52ff]")
-            return
-
-    base_url = ""
-    if provider in ["openai", "anthropic"]:
-        base_url = questionary.text(
-            f"输入 {provider} 代理 Base URL (直连请直接回车跳过):",
-            style=morty_style
-        ).ask()
-    elif provider == "ollama":
-        base_url = questionary.text(
-            "输入 Ollama Base URL (默认 http://localhost:11434，直接回车跳过):",
-            style=morty_style
-        ).ask()
-    else:
-        base_url = questionary.text(
-            "输入兼容 Base URL (不填直接回车将使用官方默认地址):",
-            style=morty_style
-        ).ask()
-
-    if base_url is None:
-        console.print("[dim #8d52ff]✦   录入中断，MortyClaw 配置已取消。[/dim #8d52ff]")
-        return
-
-    console.print("\n[dim]━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━[/dim]")
-
-    with Status(f"[bold #8d52ff]正在连接 {provider.upper()} 引擎并发送探测包...[/bold #8d52ff]", spinner="dots", spinner_style="#00ffff"):
-        try:
-            if env_key and api_key:
-                os.environ[env_key] = api_key
-            if base_url:
-                if is_openai_compatible or provider in ["aliyun", "dashscope", "z.ai", "tencent", "other"]:
-                    os.environ[_compatible_provider_primary_base_key(provider)] = base_url
-                else:
-                    os.environ[f"{provider.upper()}_BASE_URL"] = base_url
-
-            llm = get_provider(provider_name=provider, model_name=model_name)
-            response = llm.invoke([HumanMessage(content="回复我'收到'。")])
-
-            console.print(" [bold #00ffff][ 配置成功!][/bold #00ffff]")
-            
-        except Exception as e:
-
-            console.print(f" [bold #8d52ff][ 配置失败!][/bold #8d52ff]  无法连接到模型，请检查 Key、Base URL、模型型号 或 网络！\n[dim]错误信息: {str(e)}[/dim]")
-            return
-
-
-    if not os.path.exists(ENV_PATH):
-        open(ENV_PATH, 'w').close()
-
-    logging.getLogger("dotenv.main").setLevel(logging.ERROR)
-
-    unset_key(ENV_PATH, "OPENAI_API_BASE")
-    unset_key(ENV_PATH, "ALIYUN_BASE_URL")
-    unset_key(ENV_PATH, "DASHSCOPE_BASE_URL")
-    unset_key(ENV_PATH, "ZAI_BASE_URL")
-    unset_key(ENV_PATH, "TENCENT_BASE_URL")
-    unset_key(ENV_PATH, "ANTHROPIC_BASE_URL")
-    unset_key(ENV_PATH, "OLLAMA_BASE_URL")
-
-    if env_key and api_key:
-        set_key(ENV_PATH, env_key, api_key)
-        
-    if base_url:
-        if is_openai_compatible or provider in ["aliyun", "dashscope", "z.ai", "tencent", "other"]:
-            set_key(ENV_PATH, _compatible_provider_primary_base_key(provider), base_url)
-        else:
-            set_key(ENV_PATH, f"{provider.upper()}_BASE_URL", base_url)
-    
-    set_key(ENV_PATH, "DEFAULT_PROVIDER", provider)
-    set_key(ENV_PATH, "DEFAULT_MODEL", model_name)
-
-    local_windows_launcher = os.path.join(PROJECT_ROOT, ".venv", "Scripts", "mortyclaw.exe")
-    launch_command = (
-        r".\.venv\Scripts\mortyclaw.exe run"
-        if os.name == "nt" and os.path.exists(local_windows_launcher)
-        else "mortyclaw run"
-    )
-    console.print(Panel(
-        f"配置已保存至 [#8d52ff]{ENV_PATH}[/#8d52ff]\n"
-        f"当前默认提供商: [#8d52ff]{provider}[/#8d52ff] | 模型: [#8d52ff]{model_name}[/#8d52ff]\n\n"
-        f"👉 输入 [bold #00ffff]{launch_command}[/bold #00ffff] 即可启动系统！",
-        border_style="#00ffff"
-    ))
 
 def _show_boot_error():
     console.print(Panel(
@@ -363,21 +226,15 @@ def run_agent(
     branch_from: str | None = typer.Option(None, "--branch-from", help="从指定历史会话创建一个语义分支会话"),
 ):
     load_dotenv(ENV_PATH)
-    provider = os.getenv("DEFAULT_PROVIDER")
-    model = os.getenv("DEFAULT_MODEL")
-    if not provider or not model:
+    from mortyclaw.core.harness.settings import HarnessSettings
+    settings = HarnessSettings.from_env()
+    try:
+        settings.validate()
+    except RuntimeError:
         _show_boot_error()
-        raise typer.Exit()
-    if provider != "ollama":
-        if provider in ["openai", "aliyun", "dashscope", "z.ai", "tencent", "other"]:
-            if not _has_configured_compatible_provider_key(provider):
-                _show_boot_error()
-                raise typer.Exit()
-                
-        elif provider == "anthropic":
-            if not os.getenv("ANTHROPIC_API_KEY"):
-                _show_boot_error()
-                raise typer.Exit()
+        raise typer.Exit(code=1)
+    provider = "deepseek-official"
+    model = settings.model
 
     session_repository = get_session_repository()
     resolved_thread_id = thread_id
@@ -609,20 +466,13 @@ def run_feishu_bot():
     from mortyclaw.core.integrations import FeishuBotSettings, serve_feishu_bot
 
     load_dotenv(ENV_PATH)
-    provider = os.getenv("DEFAULT_PROVIDER", "").strip()
-    model = os.getenv("DEFAULT_MODEL", "").strip()
-    if not provider or not model:
+    from mortyclaw.core.harness.settings import HarnessSettings
+    harness_settings = HarnessSettings.from_env()
+    try:
+        harness_settings.validate()
+    except RuntimeError:
         _show_boot_error()
         raise typer.Exit(code=1)
-    if provider != "ollama":
-        if provider in ["openai", "aliyun", "dashscope", "z.ai", "tencent", "other"]:
-            if not _has_configured_compatible_provider_key(provider):
-                _show_boot_error()
-                raise typer.Exit(code=1)
-        elif provider == "anthropic" and not os.getenv("ANTHROPIC_API_KEY"):
-            _show_boot_error()
-            raise typer.Exit(code=1)
-
     settings = FeishuBotSettings.from_env()
     try:
         settings.validate()
@@ -645,8 +495,6 @@ def run_feishu_bot():
     try:
         asyncio.run(
             serve_feishu_bot(
-                provider=provider,
-                model=model,
                 settings=settings,
                 ready_callback=show_ready,
             )
@@ -679,11 +527,11 @@ def run_heartbeat(
     interval: int = typer.Option(10, "--interval", min=1, help="轮询检查间隔，单位秒"),
     once: bool = typer.Option(False, "--once", help="只执行一次到期任务扫描"),
 ):
-    from mortyclaw.core.heartbeat import pacemaker_loop, process_due_tasks_once
+    from mortyclaw.core.heartbeat import pacemaker_loop, process_due_tasks_with_harness_once
 
     if once:
-        triggered = process_due_tasks_once()
-        console.print(f"[bold #00ffff]本次心跳共投递 {len(triggered)} 个到期任务。[/bold #00ffff]")
+        triggered = asyncio.run(process_due_tasks_with_harness_once())
+        console.print(f"[bold #00ffff]本次心跳共执行 {len(triggered)} 个到期任务。[/bold #00ffff]")
         return
 
     console.print(f"[bold #00ffff]Heartbeat 已启动[/bold #00ffff] [dim](interval={interval}s，Ctrl+C 停止)[/dim]")
@@ -741,34 +589,6 @@ def list_workers(
     console.print(json.dumps({"success": True, "count": len(normalized), "workers": normalized}, ensure_ascii=False, indent=2))
 
 
-@app.command("program-runs")
-def list_program_runs(
-    thread_id: str = typer.Option("", "--thread-id", help="仅查看指定会话下的程序化执行记录"),
-    status_filter: str = typer.Option("", "--status-filter", help="限制状态，例如 awaiting_approval,completed"),
-    limit: int = typer.Option(20, "--limit", min=1, max=100, help="最多展示多少条程序运行记录"),
-):
-    statuses = tuple(item.strip() for item in status_filter.split(",") if item.strip()) or None
-    runs = get_tool_program_run_repository().list_program_runs(
-        thread_id=thread_id.strip(),
-        statuses=statuses,
-        limit=limit,
-    )
-    normalized = []
-    for item in runs:
-        normalized.append({
-            "program_run_id": item["program_run_id"],
-            "thread_id": item.get("thread_id", ""),
-            "status": item.get("status", ""),
-            "pc": item.get("pc", 0),
-            "created_at": item.get("created_at", ""),
-            "updated_at": item.get("updated_at", ""),
-            "finished_at": item.get("finished_at"),
-            "metadata": _decode_json_field(item.get("metadata_json", "{}"), {}),
-            "result_summary": _decode_json_field(item.get("result_summary_json", "{}"), {}),
-        })
-    console.print(json.dumps({"success": True, "count": len(normalized), "program_runs": normalized}, ensure_ascii=False, indent=2))
-
-
 @app.command("session-search")
 def session_search(
     query: str = typer.Argument("", help="要搜索的历史关键词；留空则列出最近会话"),
@@ -822,14 +642,6 @@ def session_show(
         for item in worker_runs[:5]:
             header_lines.append(
                 f"  - {item['worker_id']} | role={item.get('role','')} | status={item.get('status','')} | worker_thread={item.get('worker_thread_id','')}"
-            )
-
-    program_runs = get_tool_program_run_repository().list_program_runs(thread_id=thread_id, limit=8)
-    if program_runs:
-        header_lines.append("program_runs:")
-        for item in program_runs[:5]:
-            header_lines.append(
-                f"  - {item['program_run_id']} | status={item.get('status','')} | pc={item.get('pc', 0)} | updated_at={item.get('updated_at','')}"
             )
 
     lines = []
@@ -889,6 +701,172 @@ def migrate_tasks(
     console.print(
         f"[bold #00ffff]任务迁移完成[/bold #00ffff] [dim](imported={result['imported']}, skipped={result['skipped']})[/dim]"
     )
+
+@harness_app.command("configure")
+def configure_harness():
+    """保存 DeepSeek 凭据和 Harness 参数，并执行启动握手。"""
+    _ensure_env_file()
+    load_dotenv(ENV_PATH)
+    existing = os.getenv("DEEPSEEK_API_KEY", "")
+    if not existing and "deepseek" in os.getenv("OPENAI_API_BASE", "").lower():
+        existing = os.getenv("OPENAI_API_KEY", "")
+    api_key = questionary.password(
+        "输入 DEEPSEEK_API_KEY" + ("（直接回车保留现有值）" if existing else "") + ":",
+        style=morty_style,
+    ).ask()
+    if api_key is None:
+        return
+    api_key = api_key.strip() or existing
+    if not api_key:
+        console.print("[bold red]API Key 不能为空。[/bold red]")
+        raise typer.Exit(code=2)
+    base_url = questionary.text(
+        "自定义 DeepSeek 兼容 Base URL（官方地址直接回车）:", style=morty_style
+    ).ask()
+    if base_url is None:
+        return
+    base_url = base_url.strip()
+    if base_url.rstrip("/") == "https://api.deepseek.com":
+        base_url = ""
+    previous_env = {
+        key: os.environ.get(key)
+        for key in ("DEEPSEEK_API_KEY", "DEEPSEEK_BASE_URL", "MORTYCLAW_HARNESS_MODEL")
+    }
+    os.environ["DEEPSEEK_API_KEY"] = api_key
+    os.environ["MORTYCLAW_HARNESS_MODEL"] = "deepseek-v4-flash"
+    if base_url:
+        os.environ["DEEPSEEK_BASE_URL"] = base_url
+    else:
+        os.environ.pop("DEEPSEEK_BASE_URL", None)
+    console.print("[cyan]正在执行 DeepSeek 模型与 Harness 握手…[/cyan]")
+    try:
+        asyncio.run(_doctor_harness(model_probe=True))
+    except Exception as exc:
+        for key, value in previous_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        console.print(f"[bold red]握手失败：[/bold red] {type(exc).__name__}: {exc}")
+        raise typer.Exit(code=1)
+    set_key(ENV_PATH, "DEEPSEEK_API_KEY", api_key)
+    set_key(ENV_PATH, "MORTYCLAW_HARNESS_MODEL", "deepseek-v4-flash")
+    set_key(ENV_PATH, "MORTYCLAW_HARNESS_PROFILE", "mortyclaw-sdk")
+    if base_url:
+        set_key(ENV_PATH, "DEEPSEEK_BASE_URL", base_url)
+    else:
+        unset_key(ENV_PATH, "DEEPSEEK_BASE_URL")
+    console.print("[bold green]DeepSeek Harness 配置成功。[/bold green]")
+
+
+@harness_app.command("status")
+def harness_status():
+    """显示脱敏后的 Harness 配置和已安装版本。"""
+    from importlib.metadata import PackageNotFoundError, version
+    from mortyclaw.core.harness.settings import HarnessSettings
+    settings = HarnessSettings.from_env()
+    try:
+        sdk = version("deepseek-harness-sdk")
+    except PackageNotFoundError:
+        sdk = "not-installed"
+    try:
+        runtime = version("deepseek-harness-runtime-bin")
+    except PackageNotFoundError:
+        runtime = "not-installed"
+    async def probe() -> tuple[bool, int, str]:
+        from mortyclaw.core.harness import HarnessRuntime
+        instance = HarnessRuntime()
+        try:
+            await instance.start()
+            return True, instance.gateway.tool_count, ""
+        except Exception as exc:
+            return False, 0, type(exc).__name__
+        finally:
+            await instance.close()
+    connected, tool_count, error = asyncio.run(probe())
+    data = settings.public_status()
+    lines = [
+        f"sdk={sdk}", f"runtime={runtime}", f"connected={connected}",
+        f"tool_count={tool_count}", f"error={error or '-'}",
+    ] + [f"{key}={value}" for key, value in data.items()]
+    console.print("\n".join(lines))
+
+
+async def _doctor_harness(*, model_probe: bool = False) -> None:
+    from mortyclaw.core.config import PROJECT_ROOT
+    from mortyclaw.core.harness import HarnessRuntime, new_turn_request
+    runtime = HarnessRuntime()
+    try:
+        await runtime.start()
+        console.print(f"gateway=connected tools={runtime.gateway.tool_count}")
+        if model_probe:
+            result = await runtime.run_turn(new_turn_request(
+                thread_id="harness-doctor",
+                text="这是连接检查。只回复 OK。",
+                source="cli",
+                workspace=PROJECT_ROOT,
+            ))
+            console.print(f"model=connected finish_reason={result.finish_reason}")
+    finally:
+        await runtime.close()
+
+
+@harness_app.command("doctor")
+def harness_doctor():
+    """启动 SDK、runtime 和 Gateway，验证完整本地链路。"""
+    asyncio.run(_doctor_harness(model_probe=True))
+
+
+@gateway_app.command("status")
+def gateway_status():
+    """发现并统计 Gateway 工具，不显示 URL 或 Token。"""
+    async def probe():
+        from mortyclaw.core.harness.gateway import MortyClawGateway
+        gateway = MortyClawGateway()
+        try:
+            await gateway.start()
+            return gateway.tool_count, gateway.error
+        finally:
+            await gateway.close()
+    count, error = asyncio.run(probe())
+    console.print(f"connected={not bool(error)} tool_count={count} error={error or '-'}")
+
+
+@approvals_app.command("list")
+def approvals_list(status: str = typer.Option("pending", "--status")):
+    from mortyclaw.core.harness.storage import HarnessStore
+    rows = HarnessStore().list_batches(status=status)
+    console.print("\n".join(
+        f"{row['batch_id']} | {row['status']} | {row['thread_id']} | expires={row['expires_at']}"
+        for row in rows
+    ) or "没有匹配的审批批次。")
+
+
+@approvals_app.command("reject")
+def approvals_reject(batch_id: str):
+    async def reject():
+        from mortyclaw.core.harness import HarnessRuntime
+        runtime = HarnessRuntime()
+        try:
+            return await runtime.resolve_approval(batch_id, approved=False)
+        finally:
+            await runtime.close()
+    result = asyncio.run(reject())
+    console.print(result.final_response)
+
+
+@approvals_app.command("approve")
+def approvals_approve(batch_id: str):
+    async def execute():
+        from mortyclaw.core.harness import HarnessRuntime
+        runtime = HarnessRuntime()
+        try:
+            return await runtime.resolve_approval(batch_id, approved=True)
+        finally:
+            await runtime.close()
+    result = asyncio.run(execute())
+    console.print(result.final_response)
+
 
 def main():
     app()

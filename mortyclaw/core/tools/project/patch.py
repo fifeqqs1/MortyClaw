@@ -15,19 +15,11 @@ from .common import (
     _truncate,
 )
 from ...runtime.path_locks import get_project_path_lock_manager
-from ...runtime_context import get_active_program_run_id, get_active_thread_id, get_active_worker_id
+from ...runtime_context import get_active_thread_id
 
 
 def _active_lock_holder_id() -> str:
-    for value in (
-        get_active_program_run_id(default=""),
-        get_active_worker_id(default=""),
-        get_active_thread_id(default="system_default"),
-    ):
-        normalized = str(value or "").strip()
-        if normalized:
-            return normalized
-    return "system_default"
+    return str(get_active_thread_id(default="system_default") or "system_default").strip()
 
 
 def _extract_patch_paths(patch: str) -> list[str]:

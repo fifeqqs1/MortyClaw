@@ -5,6 +5,7 @@ import os
 import shutil
 import warnings
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Iterable, TypeVar
@@ -16,6 +17,23 @@ from ..tools.meta import ToolMeta, attach_tool_meta
 
 _T = TypeVar("_T")
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+
+def _install_quiet_stdio_transport() -> None:
+    """Keep third-party MCP stderr out of user logs and status output."""
+    import langchain_mcp_adapters.sessions as adapter_sessions
+    if getattr(adapter_sessions, "_mortyclaw_quiet_stdio", False):
+        return
+    from mcp.client.stdio import stdio_client as mcp_stdio_client
+
+    @asynccontextmanager
+    async def quiet_stdio_client(server):
+        with open(os.devnull, "w", encoding="utf-8") as sink:
+            async with mcp_stdio_client(server, errlog=sink) as streams:
+                yield streams
+
+    adapter_sessions.stdio_client = quiet_stdio_client
+    adapter_sessions._mortyclaw_quiet_stdio = True
 
 ZOTERO_READ_PREFIXES = (
     "search_", "get_", "list_", "read_", "find_", "export_", "retrieve_",
@@ -100,12 +118,12 @@ def build_zotero_config() -> MCPServerConfig:
     command = ""
     if enabled:
         command = _resolve_command(os.getenv("ZOTERO_MCP_COMMAND", "").strip(), "zotero-mcp")
-    child_env = dict(os.environ)
-    # First release is deliberately local and read-only. Do not forward web credentials.
-    for key in ("ZOTERO_API_KEY", "ZOTERO_LIBRARY_ID", "ZOTERO_LIBRARY_TYPE"):
-        child_env.pop(key, None)
-    child_env["ZOTERO_LOCAL"] = "true"
-    child_env["ZOTERO_MCP_TOOLSETS"] = os.getenv("ZOTERO_MCP_TOOLSETS", "none").strip() or "none"
+    # First release is deliberately local and read-only. No parent credentials
+    # are forwarded to this child process.
+    child_env = {
+        "ZOTERO_LOCAL": "true",
+        "ZOTERO_MCP_TOOLSETS": os.getenv("ZOTERO_MCP_TOOLSETS", "none").strip() or "none",
+    }
     return MCPServerConfig(
         name="zotero",
         enabled=enabled,
@@ -130,7 +148,7 @@ def build_arxiv_config() -> MCPServerConfig:
         enabled=enabled,
         command=command,
         args=("--storage-path", str(storage_path.resolve())),
-        env=dict(os.environ),
+        env={},
     )
 
 
@@ -155,7 +173,6 @@ def _tool_meta(service: str, tool: BaseTool) -> ToolMeta | None:
             name=name,
             capabilities={"zotero_read", "external_read", "research_read"},
             risk_level="low",
-            allowed_routes={"fast", "slow"},
         )
     if service == "arxiv":
         if bare in ARXIV_WRITE_TOOLS:
@@ -163,7 +180,6 @@ def _tool_meta(service: str, tool: BaseTool) -> ToolMeta | None:
                 name=name,
                 capabilities={"arxiv_write", "external_write", "research_write"},
                 risk_level="high",
-                allowed_routes={"slow"},
                 requires_approval=True,
             )
         read_prefixes = (
@@ -174,13 +190,11 @@ def _tool_meta(service: str, tool: BaseTool) -> ToolMeta | None:
                 name=name,
                 capabilities={"arxiv_read", "external_read", "research_read"},
                 risk_level="low",
-                allowed_routes={"fast", "slow"},
             )
         return ToolMeta.build(
             name=name,
             capabilities={"arxiv_unknown", "external_write"},
             risk_level="high",
-            allowed_routes={"slow"},
             requires_approval=True,
         )
     from .feishu_mcp import feishu_tool_meta
@@ -190,6 +204,8 @@ def _tool_meta(service: str, tool: BaseTool) -> ToolMeta | None:
 
 async def _discover_tools(config: MCPServerConfig) -> list[BaseTool]:
     from langchain_mcp_adapters.client import MultiServerMCPClient
+
+    _install_quiet_stdio_transport()
 
     client = MultiServerMCPClient(
         {config.name: config.connection()},

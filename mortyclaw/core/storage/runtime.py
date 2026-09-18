@@ -7,12 +7,10 @@ from .common import (
     ConversationToolCallRecord,
     InboxEventRecord,
     InboxStatus,
-    ProgramRunStatus,
     SessionRecord,
     SessionStatus,
     TaskRecord,
     TaskStatus,
-    ToolProgramRunRecord,
     WorkerRunRecord,
     WorkerRunStatus,
     build_fts_query,
@@ -32,7 +30,6 @@ from .common import (
     utc_now_iso,
 )
 from .conversations import ConversationRepository
-from .program_runs import ToolProgramRunRepository
 from .sessions import SessionRepository
 from .store import RuntimeStore, get_runtime_store
 from .tasks import TaskRepository
@@ -61,8 +58,6 @@ _conversation_writer: AsyncConversationWriter | None = None
 _conversation_writer_lock = threading.Lock()
 _worker_run_repository: WorkerRunRepository | None = None
 _worker_run_repository_lock = threading.Lock()
-_tool_program_run_repository: ToolProgramRunRepository | None = None
-_tool_program_run_repository_lock = threading.Lock()
 
 
 def get_task_repository(db_path: str | None = None) -> TaskRepository:
@@ -120,17 +115,6 @@ def get_worker_run_repository(db_path: str | None = None) -> WorkerRunRepository
         return _worker_run_repository
 
 
-def get_tool_program_run_repository(db_path: str | None = None) -> ToolProgramRunRepository:
-    global _tool_program_run_repository
-    if db_path is not None:
-        return ToolProgramRunRepository(get_runtime_store(db_path=db_path))
-
-    with _tool_program_run_repository_lock:
-        if _tool_program_run_repository is None:
-            _tool_program_run_repository = ToolProgramRunRepository(get_runtime_store())
-        return _tool_program_run_repository
-
-
 __all__ = [
     "AsyncConversationWriter",
     "ConversationMessageRecord",
@@ -138,7 +122,6 @@ __all__ = [
     "ConversationToolCallRecord",
     "InboxEventRecord",
     "InboxStatus",
-    "ProgramRunStatus",
     "RuntimeStore",
     "SessionRecord",
     "SessionRepository",
@@ -146,8 +129,6 @@ __all__ = [
     "TaskRecord",
     "TaskRepository",
     "TaskStatus",
-    "ToolProgramRunRecord",
-    "ToolProgramRunRepository",
     "WorkerRunRecord",
     "WorkerRunRepository",
     "WorkerRunStatus",
@@ -162,7 +143,6 @@ __all__ = [
     "get_runtime_store",
     "get_session_repository",
     "get_task_repository",
-    "get_tool_program_run_repository",
     "get_worker_run_repository",
     "json_default",
     "local_now_str",
