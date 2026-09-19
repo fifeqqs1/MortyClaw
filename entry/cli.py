@@ -11,6 +11,7 @@ from rich.status import Status
 from dotenv import set_key, load_dotenv, unset_key
 import sys
 import socket
+import secrets
 
 from mortyclaw.core.config import TASKS_FILE
 from mortyclaw.core.maintenance import (
@@ -41,6 +42,9 @@ mcp_app = typer.Typer(help="配置、检查和禁用 MCP 服务")
 harness_app = typer.Typer(help="配置和诊断 DeepSeek Harness")
 gateway_app = typer.Typer(help="检查 MortyClaw MCP Gateway")
 approvals_app = typer.Typer(help="查看和处理暂存审批")
+research_app = typer.Typer(help="配置和管理本地 Agentic RAG 科研知识库")
+research_sync_app = typer.Typer(help="增量同步研究资料来源")
+research_add_app = typer.Typer(help="向研究知识库添加指定文档")
 console = Console()
 
 morty_style = questionary.Style([
@@ -60,6 +64,9 @@ app.add_typer(mcp_app, name="mcp")
 app.add_typer(harness_app, name="harness")
 app.add_typer(gateway_app, name="gateway")
 app.add_typer(approvals_app, name="approvals")
+app.add_typer(research_app, name="research")
+research_app.add_typer(research_sync_app, name="sync")
+research_app.add_typer(research_add_app, name="add")
 
 
 def _is_transient_test_thread_id(thread_id: str | None) -> bool:
@@ -701,6 +708,206 @@ def migrate_tasks(
     console.print(
         f"[bold #00ffff]任务迁移完成[/bold #00ffff] [dim](imported={result['imported']}, skipped={result['skipped']})[/dim]"
     )
+
+
+@research_app.command("install")
+def research_install():
+    """下载并校验官方 Qdrant 1.19.1 Windows x64 发行包。"""
+    from mortyclaw.core.research.sidecar import QdrantSidecar
+
+    with Status("[bold #8d52ff]正在安装 Qdrant 1.19.1...[/bold #8d52ff]", spinner="dots"):
+        path = QdrantSidecar().install()
+    console.print(f"[bold green]Qdrant 已安装。[/bold green] [dim]{path}[/dim]")
+
+
+@research_app.command("start")
+def research_start():
+    """在后台隐藏启动本地 Qdrant。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research.sidecar import QdrantSidecar
+
+    result = QdrantSidecar().start()
+    console.print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@research_app.command("stop")
+def research_stop():
+    """停止由 MortyClaw 启动的本地 Qdrant。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research.sidecar import QdrantSidecar
+
+    console.print(json.dumps(QdrantSidecar().stop(), ensure_ascii=False, indent=2))
+
+
+@research_app.command("configure")
+def research_configure():
+    """启用 Agentic RAG、启动 Qdrant 并创建混合检索 collection。"""
+    _ensure_env_file()
+    load_dotenv(ENV_PATH, override=True)
+    api_key = os.getenv("QDRANT_API_KEY", "").strip() or secrets.token_urlsafe(32)
+    values = {
+        "RESEARCH_RAG_ENABLED": "1",
+        "QDRANT_URL": os.getenv("QDRANT_URL", "http://127.0.0.1:6333").strip()
+        or "http://127.0.0.1:6333",
+        "QDRANT_API_KEY": api_key,
+        "QDRANT_STORAGE_PATH": os.getenv("QDRANT_STORAGE_PATH", "workspace/qdrant").strip()
+        or "workspace/qdrant",
+        "RESEARCH_COLLECTION": os.getenv("RESEARCH_COLLECTION", "mortyclaw_research_v1").strip()
+        or "mortyclaw_research_v1",
+        "RESEARCH_EMBEDDING_MODEL": "intfloat/multilingual-e5-large",
+    }
+    for key, value in values.items():
+        set_key(ENV_PATH, key, value)
+        os.environ[key] = value
+    from mortyclaw.core.research.qdrant import ResearchVectorStore
+    from mortyclaw.core.research.embeddings import LazyDenseEmbedding
+    from mortyclaw.core.research.settings import ResearchSettings
+    from mortyclaw.core.research.sidecar import QdrantSidecar
+
+    settings = ResearchSettings.from_env()
+    sidecar = QdrantSidecar(settings)
+    if sidecar.executable() is None:
+        with Status("[bold #8d52ff]正在安装 Qdrant...[/bold #8d52ff]", spinner="dots"):
+            sidecar.install()
+    if not sidecar.is_healthy():
+        with Status("[bold #8d52ff]正在启动 Qdrant...[/bold #8d52ff]", spinner="dots"):
+            sidecar.start()
+    with Status("[bold #8d52ff]正在初始化混合检索 collection...[/bold #8d52ff]", spinner="dots"):
+        ResearchVectorStore(settings).ensure_collection()
+    with Status("[bold #8d52ff]正在下载并验证本地多语言 Embedding...[/bold #8d52ff]", spinner="dots"):
+        vector = LazyDenseEmbedding(settings).embed_query("MortyClaw 科研知识检索配置检查")
+    if len(vector) != 1024:
+        raise RuntimeError(f"Embedding 维度错误：期望 1024，实际 {len(vector)}")
+    console.print(
+        Panel(
+            "Agentic RAG 已启用。Qdrant API Key 已保存到 Git 忽略的 .env。\n"
+            "Qdrant collection 与本地 Embedding 模型均已就绪。",
+            title="Research RAG Configured",
+            border_style="#00ffff",
+        )
+    )
+
+
+@research_app.command("status")
+def research_status():
+    """显示脱敏后的 Qdrant、模型和知识库状态。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research.settings import ResearchSettings
+    from mortyclaw.core.research.sidecar import QdrantSidecar
+    from mortyclaw.core.research.store import ResearchDocumentRepository
+
+    settings = ResearchSettings.from_env()
+    status = QdrantSidecar(settings).status()
+    status.update(settings.public_status())
+    status.update(ResearchDocumentRepository().counts())
+    console.print(json.dumps(status, ensure_ascii=False, indent=2))
+
+
+@research_app.command("doctor")
+def research_doctor():
+    """验证 Qdrant、Dense Embedding、BM25 与 RRF 混合查询。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research.embeddings import LazyDenseEmbedding
+    from mortyclaw.core.research.qdrant import ResearchVectorStore
+    from mortyclaw.core.research.settings import ResearchSettings
+
+    settings = ResearchSettings.from_env()
+    if not settings.enabled:
+        console.print("[bold red]Agentic RAG 尚未启用，请先执行 mortyclaw research configure。[/bold red]")
+        raise typer.Exit(code=1)
+    store = ResearchVectorStore(settings)
+    store.health()
+    store.ensure_collection()
+    with Status("[bold #8d52ff]正在加载并验证本地多语言 Embedding...[/bold #8d52ff]", spinner="dots"):
+        vector = LazyDenseEmbedding(settings).embed_query("MortyClaw 科研知识检索连接检查")
+    store.search(
+        query="MortyClaw 科研知识检索连接检查",
+        dense_vector=vector,
+        sources=["zotero", "feishu", "arxiv"],
+        document_ids=None,
+        year_from=None,
+        year_to=None,
+        limit=1,
+    )
+    console.print(
+        f"[bold green]Research doctor passed.[/bold green] "
+        f"qdrant=connected dense_dimensions={len(vector)} bm25=connected rrf=connected"
+    )
+
+
+@research_sync_app.command("zotero")
+def research_sync_zotero_cli(
+    limit: int = typer.Option(1000, "--limit", min=1, max=10000),
+    query: str = typer.Option("", "--query", help="只同步匹配主题、标题或作者的条目"),
+    force: bool = typer.Option(False, "--force"),
+):
+    """增量同步本机 Zotero 中可读取全文的条目。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research import ResearchIndexer
+
+    result = ResearchIndexer().sync_zotero(limit=limit, query=query, force=force)
+    console.print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+@research_add_app.command("feishu")
+def research_add_feishu(document_url: str, force: bool = typer.Option(False, "--force")):
+    """添加一份明确指定的飞书文档或知识库节点。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research import ResearchIndexer
+
+    console.print(json.dumps(
+        ResearchIndexer().index_locator("feishu", document_url, force=force),
+        ensure_ascii=False,
+        indent=2,
+    ))
+
+
+@research_add_app.command("arxiv")
+def research_add_arxiv(locator: str, force: bool = typer.Option(False, "--force")):
+    """添加 arXiv ID、已下载论文或本地 PDF。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research import ResearchIndexer
+
+    console.print(json.dumps(
+        ResearchIndexer().index_locator("arxiv", locator, force=force),
+        ensure_ascii=False,
+        indent=2,
+    ))
+
+
+@research_app.command("list")
+def research_list(
+    source: str = typer.Option("", "--source"),
+    limit: int = typer.Option(100, "--limit", min=1, max=1000),
+):
+    """列出科研知识库文档同步状态。"""
+    from mortyclaw.core.research.store import ResearchDocumentRepository
+
+    rows = ResearchDocumentRepository().list(source=source.strip().lower(), limit=limit)
+    console.print(json.dumps(rows, ensure_ascii=False, indent=2))
+
+
+@research_app.command("remove")
+def research_remove(document_key: str):
+    """从本地索引移除文档，不删除原始资料。"""
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research import ResearchIndexer
+
+    console.print(json.dumps(ResearchIndexer().remove(document_key), ensure_ascii=False, indent=2))
+
+
+@research_app.command("rebuild")
+def research_rebuild(
+    yes: bool = typer.Option(False, "--yes", help="确认清空本地研究索引状态"),
+):
+    """清空 Qdrant collection，之后需要重新同步来源。"""
+    if not yes:
+        console.print("[bold red]该操作会清空本地研究索引，请增加 --yes。[/bold red]")
+        raise typer.Exit(code=2)
+    load_dotenv(ENV_PATH, override=True)
+    from mortyclaw.core.research import ResearchIndexer
+
+    console.print(json.dumps(ResearchIndexer().rebuild(), ensure_ascii=False, indent=2))
 
 @harness_app.command("configure")
 def configure_harness():

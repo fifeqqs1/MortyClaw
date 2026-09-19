@@ -27,6 +27,12 @@ def zotero_create_item(title: str) -> str:
     return title
 
 
+@tool("zotero_semantic_search")
+def zotero_semantic_search(query: str) -> str:
+    """Search Zotero's optional Chroma index."""
+    return query
+
+
 @tool("arxiv_search_papers")
 def arxiv_search_papers(query: str) -> str:
     """Search arXiv."""
@@ -57,6 +63,9 @@ class MCPManagerTests(unittest.TestCase):
     def test_zotero_write_tools_are_filtered(self):
         self.assertIsNotNone(_tool_meta("zotero", zotero_search_items))
         self.assertIsNone(_tool_meta("zotero", zotero_create_item))
+
+    def test_zotero_optional_semantic_tool_is_replaced_by_research_retrieve(self):
+        self.assertIsNone(_tool_meta("zotero", zotero_semantic_search))
 
     def test_duplicate_server_prefix_is_collapsed(self):
         self.assertEqual(

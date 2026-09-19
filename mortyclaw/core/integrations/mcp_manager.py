@@ -40,8 +40,12 @@ ZOTERO_READ_PREFIXES = (
 )
 ZOTERO_READ_TOOLS = {
     "advanced_search",
-    "semantic_search",
     "synthesize_annotations",
+}
+ZOTERO_DISABLED_TOOLS = {
+    # zotero-mcp implements this through its optional ChromaDB index. MortyClaw
+    # has one shared Qdrant research index instead, exposed as research_retrieve.
+    "semantic_search",
 }
 ARXIV_WRITE_TOOLS = {
     "download_paper",
@@ -167,6 +171,8 @@ def _tool_meta(service: str, tool: BaseTool) -> ToolMeta | None:
     name = str(getattr(tool, "name", "") or "")
     bare = _bare_tool_name(service, name).lower()
     if service == "zotero":
+        if bare in ZOTERO_DISABLED_TOOLS:
+            return None
         if not (bare.startswith(ZOTERO_READ_PREFIXES) or bare in ZOTERO_READ_TOOLS):
             return None
         return ToolMeta.build(

@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from mortyclaw.core.harness.gateway import GatewayTool, MortyClawGateway, _PUBLIC_NAMES, _schema_for
 from mortyclaw.core.harness.settings import HarnessSettings
 from mortyclaw.core.harness.storage import HarnessStore
-from mortyclaw.core.harness.runtime import _redact
+from mortyclaw.core.harness.runtime import _is_session_already_exists, _redact
 from mortyclaw.core.storage.store import RuntimeStore
 from mortyclaw.core.tools.meta import ToolMeta, attach_tool_meta
 
@@ -133,6 +133,13 @@ class HarnessSettingsTests(unittest.TestCase):
         )
         self.assertNotIn("sk-visible-secret", value)
         self.assertNotIn("gateway-secret", value)
+
+    def test_persisted_session_collision_is_recognized_through_cause(self):
+        root = RuntimeError('session "mc-existing" already exists')
+        wrapper = RuntimeError("JSON-RPC failed")
+        wrapper.__cause__ = root
+        self.assertTrue(_is_session_already_exists(wrapper))
+        self.assertFalse(_is_session_already_exists(RuntimeError("network unavailable")))
 
     def test_official_old_base_migrates_key_without_forwarding_base(self):
         env = {

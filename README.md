@@ -13,7 +13,7 @@ MortyClaw 是运行在飞书、本地 CLI 和定时任务中的科研办公助�
                  ↓
        MortyClaw MCP Gateway
                  ↓
- 飞书 / Zotero / Arxiv / 记忆 / 项目工具
+飞书 / Zotero / Arxiv / Agentic RAG / 记忆 / 项目工具
 ```
 
 - Harness 负责 Agent Loop、当前会话上下文、压缩、Skill 和原生子 Agent。
@@ -49,6 +49,8 @@ cd MortyClaw
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e ".[research-mcp]"
+# 需要本地科研知识库时再安装：
+python -m pip install -e ".[rag]"
 Copy-Item .env.example .env
 ```
 
@@ -121,6 +123,53 @@ mortyclaw mcp status
 Zotero 使用本机 Local API，并始终过滤所有写工具。请在 Zotero 的高级设置中开启“允许此计算机上的其他应用与 Zotero 通信”。
 
 Arxiv 搜索和读取可直接执行；论文下载、主题监控和索引变更进入审批。论文缓存限定在 `workspace/arxiv-papers`。
+
+## Agentic RAG 科研知识库
+
+Agentic RAG 是可选功能。DeepSeek Harness 自主判断当前问题是否缺少用户论文或文档证据，只有调用
+`research_retrieve` 时才加载本地 Embedding 并查询 Qdrant。普通飞书聊天、代码问答、润色、翻译和
+对已提供文本的总结不会预先检索，也没有额外的规则 Router 或分类模型。
+
+首次配置：
+
+```powershell
+python -m pip install -e ".[rag]"
+mortyclaw research configure
+mortyclaw research doctor
+```
+
+`configure` 会安装并在 `127.0.0.1:6333` 启动官方 Qdrant 1.19.1 Windows x64 进程，下载并验证
+`intfloat/multilingual-e5-large` 本地模型；API Key 只保存到 Git 忽略的 `.env`。`doctor` 可随时复查
+Qdrant、Dense、BM25 与 RRF 链路。
+
+资料入库：
+
+```powershell
+mortyclaw research sync zotero
+mortyclaw research sync zotero --query "UAV tracking" --limit 20
+mortyclaw research add feishu <document-url>
+mortyclaw research add arxiv <paper-id-or-pdf>
+mortyclaw research list
+mortyclaw research status
+```
+
+- Zotero 同步本地可读全文；可用 `--query` 只同步指定主题、标题或作者，Zotero 本身仍严格只读。
+- 飞书只索引明确提供的文档或 Wiki 节点，不扫描整个云空间。
+- arXiv 只索引明确添加或已下载的论文；实时论文搜索仍走 `arxiv_*` MCP。
+- Dense E5 与多语言 BM25 在 Qdrant 中通过 RRF 融合，召回结果保留标题、章节、页码和来源链接。
+- 相同会话中的完全相同查询使用两小时进程内缓存；缓存、chunk 和向量均不写 SQLite。
+
+Qdrant 生命周期与维护：
+
+```powershell
+mortyclaw research start
+mortyclaw research stop
+mortyclaw research remove <document-key>
+mortyclaw research rebuild --yes
+```
+
+`runtime.sqlite3` 只增加 `research_documents` 一张表，用于内容 hash 和同步状态。正文、chunk、向量保存在
+`workspace/qdrant`，模型保存在 `workspace/models`；这些目录均被 Git 忽略。
 
 ## 审批
 

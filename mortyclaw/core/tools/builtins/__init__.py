@@ -24,6 +24,12 @@ from ...memory import (
 )
 from ...runtime_context import get_active_thread_id
 from ...storage.runtime import get_conversation_repository, get_session_repository, get_task_repository
+from ...research.tools import (
+    research_index_document,
+    research_remove_document,
+    research_retrieve,
+    research_sync_zotero,
+)
 from .profile import save_user_profile_impl
 from .sessions import (
     ensure_session_record_impl,
@@ -228,6 +234,10 @@ __all__ = [
     "modify_scheduled_task",
     "read_office_file",
     "read_project_file",
+    "research_index_document",
+    "research_remove_document",
+    "research_retrieve",
+    "research_sync_zotero",
     "run_project_command",
     "run_project_tests",
     "save_user_profile",

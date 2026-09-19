@@ -357,6 +357,19 @@ class RuntimeStore:
                     );
                     CREATE INDEX IF NOT EXISTS idx_approval_operations_batch_ordinal
                     ON approval_operations(batch_id, ordinal);
+                    CREATE TABLE IF NOT EXISTS research_documents (
+                        document_key TEXT PRIMARY KEY,
+                        source TEXT NOT NULL,
+                        source_id TEXT NOT NULL,
+                        title TEXT NOT NULL DEFAULT '',
+                        uri TEXT NOT NULL DEFAULT '',
+                        content_hash TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        chunk_count INTEGER NOT NULL DEFAULT 0,
+                        indexed_at TEXT,
+                        error_type TEXT NOT NULL DEFAULT '',
+                        updated_at TEXT NOT NULL
+                    );
                     """
                 )
                 conn.commit()

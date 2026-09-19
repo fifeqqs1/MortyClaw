@@ -142,6 +142,13 @@ class MortyClawGateway:
 
     async def discover_tools(self) -> None:
         tools = [tool for tool in BUILTIN_TOOLS if str(getattr(tool, "name", "")) not in _EXCLUDED_BUILTINS]
+        from ..research.settings import ResearchSettings
+        from ..research.tools import RESEARCH_TOOL_NAMES
+        if not ResearchSettings.from_env().enabled:
+            tools = [
+                tool for tool in tools
+                if str(getattr(tool, "name", "") or "") not in RESEARCH_TOOL_NAMES
+            ]
         external = await asyncio.to_thread(self._load_external_tools_quietly)
         tools.extend(external)
         catalog: dict[str, GatewayTool] = {}

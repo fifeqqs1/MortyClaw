@@ -9,6 +9,7 @@
 | 对话内核 | `deepseek-harness-sdk==0.1.6a2` | Agent Loop、会话上下文、压缩、Skill、原生子 Agent |
 | 工具网关 | `core/harness/gateway.py` | Streamable HTTP MCP、上下文令牌、风险判断和审批暂存 |
 | MCP 管理 | `core/integrations/mcp_manager.py` | 飞书、Zotero、Arxiv 的发现、命名隔离和故障降级 |
+| 科研检索 | `core/research/` | 按需 Embedding、Qdrant 混合检索、文档增量同步和进程内去重 |
 | 持久化 | `core/harness/storage.py`, `core/storage/`, `core/memory/` | session generation、租约、审批、FTS5、长期记忆和审计 |
 
 ## 一次普通轮次
@@ -53,6 +54,7 @@ mcp__mortyclaw__arxiv_*
 mcp__mortyclaw__memory_*
 mcp__mortyclaw__task_*
 mcp__mortyclaw__project_*
+mcp__mortyclaw__research_*
 ```
 
 所有工具 Schema 都增加必填 `context_token`。数据库仅保存令牌哈希。令牌映射到 `thread_id`、`turn_id`、来源和工作区，默认两小时过期。它只定位可信运行时上下文，不改变工具风险等级。
@@ -80,6 +82,20 @@ MortyClaw 管理长期用户偏好、项目事实、工作流偏好与跨会话 
 
 Gateway 还提供 `memory_search_sessions` 与记忆工具，使 Harness 在用户明确引用历史任务时扩大检索。
 
+## Agentic RAG
+
+Harness 不经过规则 Router，而是根据用户问题和当前上下文自主决定是否调用 `research_retrieve`。工具描述和
+Skill 要求：普通问答不检索；已有 `[RETRIEVED_EVIDENCE]` 足够时直接使用；只有出现新的证据缺口时才以
+`mode=expand` 补充召回。完全相同的查询由两小时进程内缓存去重，不做可能误拦截的语义相似规则。
+
+Qdrant 1.19.1 作为独立本地服务保存文档 chunk、1024 维 multilingual-e5-large dense vector、BM25 sparse
+vector 和来源 payload。检索并行获取 dense 与多语言 BM25 候选，使用 RRF 融合，再合并相邻 chunk 并限制
+每篇文档最多两个证据片段。Embedding 和 Qdrant 客户端均延迟初始化，因此普通飞书对话不会访问检索层。
+
+SQLite 只增加 `research_documents` 一张来源级同步表，保存 `document_key`、内容 hash、状态和 chunk 数；
+不保存正文、chunk、向量、召回日志或缓存。Zotero 可读全文、明确指定的飞书文档以及明确添加或已下载的
+arXiv 论文通过统一索引器增量写入 Qdrant。
+
 ## Harness Profile 与 Skill
 
 `mortyclaw-sdk` 基于 Harness 的 `sdk` profile，并通过 `configs/mortyclaw-harness.patch.yml`：
@@ -93,4 +109,5 @@ Gateway 还提供 `memory_search_sessions` 与记忆工具，使 Harness 在用�
 
 ## 数据库兼容
 
-迁移只新增 Harness、上下文令牌和审批表。旧 checkpoint、worker 和会话数据不删除，因此历史搜索仍可使用。新入口不再导入或创建旧执行图。
+迁移新增 Harness、上下文令牌、审批表和一张轻量 `research_documents` 同步状态表。旧 checkpoint、worker
+和会话数据不删除，因此历史搜索仍可使用。新入口不再导入或创建旧执行图。

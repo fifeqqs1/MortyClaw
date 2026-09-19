@@ -19,6 +19,12 @@ setup(
             "zotero-mcp-server==0.9.1",
             "arxiv-mcp-server==0.7.2",
         ],
+        "rag": [
+            "qdrant-client==1.19.1",
+            "fastembed==0.8.0",
+            "PyMuPDF>=1.26,<2",
+            "tokenizers==0.23.2",
+        ],
     },
     entry_points={
         "console_scripts": [

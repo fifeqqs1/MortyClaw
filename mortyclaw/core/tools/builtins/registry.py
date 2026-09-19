@@ -11,6 +11,10 @@ from . import (
     modify_scheduled_task,
     read_office_file,
     read_project_file,
+    research_index_document,
+    research_remove_document,
+    research_retrieve,
+    research_sync_zotero,
     run_project_command,
     run_project_tests,
     save_user_profile,
@@ -103,6 +107,25 @@ BUILTIN_TOOL_META = {
     "delete_scheduled_task": _meta("delete_scheduled_task", {"task_write"}, risk_level="medium"),
     "modify_scheduled_task": _meta("modify_scheduled_task", {"task_write"}, risk_level="medium"),
     "search_sessions": _meta("search_sessions", {"session_read"}),
+    "research_retrieve": _meta("research_retrieve", {"research_read", "external_read"}),
+    "research_index_document": _meta(
+        "research_index_document",
+        {"research_write", "external_read"},
+        risk_level="high",
+        requires_approval=True,
+    ),
+    "research_remove_document": _meta(
+        "research_remove_document",
+        {"research_write"},
+        risk_level="high",
+        requires_approval=True,
+    ),
+    "research_sync_zotero": _meta(
+        "research_sync_zotero",
+        {"research_write", "zotero_read"},
+        risk_level="high",
+        requires_approval=True,
+    ),
 }
 
 
@@ -136,6 +159,10 @@ BUILTIN_TOOLS = [
     delete_scheduled_task,
     modify_scheduled_task,
     search_sessions,
+    research_retrieve,
+    research_index_document,
+    research_remove_document,
+    research_sync_zotero,
 ]
 
 BUILTIN_TOOLS = [_with_builtin_meta(tool) for tool in BUILTIN_TOOLS]
